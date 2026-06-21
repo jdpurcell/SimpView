@@ -106,7 +106,6 @@ struct ImageViewport: NSViewRepresentable {
 @MainActor
 final class ZoomableImageView: NSView {
     static let zoomStep: CGFloat = 1.25
-    static let scrollZoomSpeed: CGFloat = 2
 
     var zoomChanged: ((Double?) -> Void)?
     var zoomModeChanged: ((ViewportZoomMode) -> Void)?
@@ -697,13 +696,11 @@ private final class MagnifyingScrollView: NSScrollView {
             userScrollZoomBegan?()
         }
 
-        let normalizedDelta = event.hasPreciseScrollingDeltas
-            ? verticalDelta
-            : verticalDelta * 120
-        let stepAmount =
-            abs(normalizedDelta) / 120 * ZoomableImageView.scrollZoomSpeed
+        let stepAmount = event.hasPreciseScrollingDeltas
+            ? abs(verticalDelta) / 60
+            : 1
         let stepFactor = 1 + (ZoomableImageView.zoomStep - 1) * stepAmount
-        let factor = normalizedDelta > 0 ? stepFactor : 1 / stepFactor
+        let factor = verticalDelta > 0 ? stepFactor : 1 / stepFactor
 
         let locationInClipView = contentView.convert(
             event.locationInWindow,
@@ -786,7 +783,7 @@ private final class MagnifyingScrollView: NSScrollView {
 
         scrollZoomEndTask?.cancel()
         scrollZoomEndTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(80))
+            try? await Task.sleep(for: .milliseconds(333))
             guard !Task.isCancelled, let self else {
                 return
             }
