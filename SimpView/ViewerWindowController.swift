@@ -9,18 +9,26 @@ final class ViewerWindowController: NSWindowController {
     var didFailToOpenImage: ((URL) -> Void)?
 
     private var openTask: Task<Void, Never>?
+    private var zoomPercentage: Double?
 
     init() {
         super.init(window: nil)
 
-        let contentView = ImageViewerView(document: imageDocument) { [weak self] url in
-            guard let self else {
-                return false
-            }
+        let contentView = ImageViewerView(
+            document: imageDocument,
+            openDroppedFile: { [weak self] url in
+                guard let self else {
+                    return false
+                }
 
-            self.open(url)
-            return true
-        }
+                self.open(url)
+                return true
+            },
+            zoomChanged: { [weak self] percentage in
+                self?.zoomPercentage = percentage
+                self?.updateWindowTitle()
+            }
+        )
         let hostingController = NSHostingController(rootView: contentView)
         let window = NSWindow(contentViewController: hostingController)
 
@@ -58,7 +66,8 @@ final class ViewerWindowController: NSWindowController {
 
             switch result {
             case .opened:
-                window?.title = imageDocument.displayName
+                zoomPercentage = nil
+                updateWindowTitle()
                 window?.representedURL = url
                 didOpenImage?()
             case .failed:
@@ -72,5 +81,22 @@ final class ViewerWindowController: NSWindowController {
     func closeImage() {
         openTask?.cancel()
         imageDocument.close()
+    }
+
+    private func updateWindowTitle() {
+        guard imageDocument.fileURL != nil else {
+            window?.title = "SimpView"
+            return
+        }
+
+        if let zoomPercentage {
+            window?.title = String(
+                format: "%.1f%% - %@",
+                zoomPercentage,
+                imageDocument.displayName
+            )
+        } else {
+            window?.title = imageDocument.displayName
+        }
     }
 }
