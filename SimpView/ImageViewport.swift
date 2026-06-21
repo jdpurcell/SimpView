@@ -131,6 +131,7 @@ final class ZoomableImageView: NSView {
     private var zoomMode: ViewportZoomMode = .fit
     private var isApplyingAutomaticZoom = false
     private var shouldCenterAutomaticZoom = true
+    private var lastPanProposedOrigin: NSPoint?
     private var recenterTask: Task<Void, Never>?
 
     override init(frame frameRect: NSRect) {
@@ -208,54 +209,37 @@ final class ZoomableImageView: NSView {
             }
             cancelRecenterAnimation(restoreCentering: false)
             clipView.isCenteringEnabled = false
+            lastPanProposedOrigin = clipView.bounds.origin
         }
         scrollView.userPanned = { [weak self] proposedOrigin in
-            guard let self else {
+            guard
+                let self,
+                let lastPanProposedOrigin
+            else {
                 return
             }
-            let bounds = clipView.resistedBounds(
-                for: NSRect(
-                    origin: proposedOrigin,
-                    size: clipView.bounds.size
-                )
+            let delta = NSPoint(
+                x: proposedOrigin.x - lastPanProposedOrigin.x,
+                y: proposedOrigin.y - lastPanProposedOrigin.y
             )
+            self.lastPanProposedOrigin = proposedOrigin
+            let bounds = clipView.resistedBounds(by: delta)
             clipView.setBoundsOrigin(bounds.origin)
             scrollView.reflectScrolledClipView(clipView)
         }
         scrollView.userPanEnded = { [weak self, weak scrollView] in
+            self?.lastPanProposedOrigin = nil
             self?.animateRecentering(scrollView: scrollView)
         }
         scrollView.userAutomaticZoomRequested = { [weak self] mode in
             self?.setZoomMode(mode, centeringImage: true)
         }
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(liveScrollWillStart(_:)),
-            name: NSScrollView.willStartLiveScrollNotification,
-            object: scrollView
-        )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(liveScrollDidEnd(_:)),
-            name: NSScrollView.didEndLiveScrollNotification,
-            object: scrollView
-        )
-
         addSubview(scrollView)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
-    }
-
-    @objc private func liveScrollWillStart(_ notification: Notification) {
-        cancelRecenterAnimation()
-        scrollView.beginNativeScrollSequence()
-    }
-
-    @objc private func liveScrollDidEnd(_ notification: Notification) {
-        scrollView.endNativeScrollSequence()
     }
 
     override func layout() {
@@ -521,28 +505,9 @@ private final class MagnifyingScrollView: NSScrollView {
     private var dragStartOrigin: NSPoint?
     private var isScrollZooming = false
     private var scrollZoomEndTask: Task<Void, Never>?
-    private var isSuppressingScrollGesture = false
+    private var panScrollOrigin: NSPoint?
+    private var panScrollEndTask: Task<Void, Never>?
     private var scrollMode: ScrollMode?
-    private var isNativeMomentumActive = false
-
-    fileprivate func beginNativeScrollSequence() {
-        isScrollSequenceActive = true
-    }
-
-    fileprivate func endNativeScrollSequence() {
-        guard !isNativeMomentumActive else {
-            return
-        }
-        finishNativeScrollSequence()
-    }
-
-    private func finishNativeScrollSequence() {
-        isScrollSequenceActive = false
-        isSuppressingScrollGesture = false
-        if scrollMode == .native {
-            scrollMode = nil
-        }
-    }
 
     override func resetCursorRects() {
         super.resetCursorRects()
@@ -684,51 +649,24 @@ private final class MagnifyingScrollView: NSScrollView {
             scrollMode = isCommandScroll ? .native : .zoom
         }
 
-        if event.momentumPhase.contains(.began)
-            || event.momentumPhase.contains(.changed)
-        {
-            isNativeMomentumActive = scrollMode == .native
-        }
-
         let shouldScrollNatively =
             isMomentum
                 ? scrollMode == .native
                 : isCommandScroll
 
-        if isSuppressingScrollGesture {
-            if event.phase.contains(.ended)
-                || event.phase.contains(.cancelled)
-            {
-                isSuppressingScrollGesture = false
-            }
-            return
-        }
-
         if shouldScrollNatively {
-            super.scrollWheel(with: event)
-            if event.momentumPhase.contains(.ended) {
-                isNativeMomentumActive = false
-                finishNativeScrollSequence()
-            }
+            handlePanScroll(event)
             return
         }
 
         if isScrollSequenceActive {
             let beginsNewGesture =
                 event.phase.contains(.began)
-                && event.momentumPhase.isEmpty
-
-            if beginsNewGesture {
-                isSuppressingScrollGesture = true
+                    && event.momentumPhase.isEmpty
+            guard beginsNewGesture else {
                 return
             }
-
-            super.scrollWheel(with: event)
-            if event.momentumPhase.contains(.ended) {
-                isNativeMomentumActive = false
-                finishNativeScrollSequence()
-            }
-            return
+            finishPanScroll()
         }
 
         if event.momentumPhase.contains(.ended) {
@@ -781,6 +719,65 @@ private final class MagnifyingScrollView: NSScrollView {
         if event.phase.isEmpty && event.momentumPhase.isEmpty {
             scheduleScrollZoomEnd()
         }
+    }
+
+    private func handlePanScroll(_ event: NSEvent) {
+        panScrollEndTask?.cancel()
+        panScrollEndTask = nil
+
+        if !isScrollSequenceActive {
+            isScrollSequenceActive = true
+            panScrollOrigin = contentView.bounds.origin
+            userPanBegan?()
+        }
+
+        if
+            let currentOrigin = panScrollOrigin,
+            magnification.isFinite,
+            magnification > 0
+        {
+            let proposedOrigin = NSPoint(
+                x: currentOrigin.x
+                    - event.scrollingDeltaX / magnification,
+                y: currentOrigin.y
+                    + event.scrollingDeltaY / magnification
+            )
+            panScrollOrigin = proposedOrigin
+            userPanned?(proposedOrigin)
+        }
+
+        if event.momentumPhase.contains(.ended)
+            || event.phase.contains(.cancelled)
+        {
+            finishPanScroll()
+        } else if event.phase.contains(.ended) {
+            schedulePanScrollEnd()
+        }
+    }
+
+    private func schedulePanScrollEnd() {
+        panScrollEndTask?.cancel()
+        panScrollEndTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(80))
+            guard !Task.isCancelled, let self else {
+                return
+            }
+            finishPanScroll()
+        }
+    }
+
+    private func finishPanScroll() {
+        panScrollEndTask?.cancel()
+        panScrollEndTask = nil
+
+        guard isScrollSequenceActive else {
+            return
+        }
+
+        isScrollSequenceActive = false
+        panScrollOrigin = nil
+        scrollMode = nil
+        userPanEnded?()
     }
 
     private func scheduleScrollZoomEnd() {
@@ -864,27 +861,63 @@ private final class CenteringClipView: NSClipView {
         return result
     }
 
-    func resistedBounds(for proposedBounds: NSRect) -> NSRect {
-        let constrainedBounds = centeredBounds(for: proposedBounds)
-        var bounds = proposedBounds
-
-        bounds.origin.x = resistedPosition(
-            proposedBounds.origin.x,
-            constrained: constrainedBounds.origin.x
+    func resistedBounds(by delta: NSPoint) -> NSRect {
+        let currentBounds = bounds
+        let proposedBounds = NSRect(
+            x: currentBounds.origin.x + delta.x,
+            y: currentBounds.origin.y + delta.y,
+            width: currentBounds.width,
+            height: currentBounds.height
         )
-        bounds.origin.y = resistedPosition(
-            proposedBounds.origin.y,
-            constrained: constrainedBounds.origin.y
+        let constrainedCurrentBounds = centeredBounds(for: currentBounds)
+        let constrainedProposedBounds = centeredBounds(for: proposedBounds)
+        var resistedBounds = proposedBounds
+
+        resistedBounds.origin.x = resistedPosition(
+            current: currentBounds.origin.x,
+            proposed: proposedBounds.origin.x,
+            constrainedCurrent: constrainedCurrentBounds.origin.x,
+            constrainedProposed: constrainedProposedBounds.origin.x
+        )
+        resistedBounds.origin.y = resistedPosition(
+            current: currentBounds.origin.y,
+            proposed: proposedBounds.origin.y,
+            constrainedCurrent: constrainedCurrentBounds.origin.y,
+            constrainedProposed: constrainedProposedBounds.origin.y
         )
 
-        return bounds
+        return resistedBounds
     }
 
     private func resistedPosition(
-        _ proposed: CGFloat,
-        constrained: CGFloat
+        current: CGFloat,
+        proposed: CGFloat,
+        constrainedCurrent: CGFloat,
+        constrainedProposed: CGFloat
     ) -> CGFloat {
-        constrained + (proposed - constrained) * Self.overscrollResistance
+        let currentOvershoot = current - constrainedCurrent
+        let proposedOvershoot = proposed - constrainedProposed
+        let delta = proposed - current
+        let isReturning =
+            currentOvershoot != 0
+                && delta * currentOvershoot < 0
+
+        if isReturning {
+            if proposedOvershoot == 0
+                || proposedOvershoot.sign == currentOvershoot.sign
+            {
+                return proposed
+            }
+            return constrainedProposed
+                + proposedOvershoot * Self.overscrollResistance
+        }
+
+        if currentOvershoot == 0 {
+            return constrainedProposed
+                + proposedOvershoot * Self.overscrollResistance
+        }
+
+        return current + delta * Self.overscrollResistance
     }
 }
 
