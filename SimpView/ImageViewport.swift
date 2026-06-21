@@ -155,9 +155,9 @@ final class ZoomableImageView: NSView {
             guard let self else {
                 return
             }
-            cancelRecenterAnimation(restoreCentering: false)
+            cancelRecenterAnimation(restoreConstraints: false)
             setManualZoomMode()
-            clipView.isCenteringEnabled = false
+            clipView.areConstraintsEnabled = false
         }
         scrollView.userMagnified = { [weak self] magnification, point in
             guard let self else {
@@ -180,9 +180,9 @@ final class ZoomableImageView: NSView {
             guard let self else {
                 return
             }
-            cancelRecenterAnimation(restoreCentering: false)
+            cancelRecenterAnimation(restoreConstraints: false)
             setManualZoomMode()
-            clipView.isCenteringEnabled = false
+            clipView.areConstraintsEnabled = false
         }
         scrollView.userScrollZoomed = { [weak self] factor, point in
             guard let self else {
@@ -207,8 +207,8 @@ final class ZoomableImageView: NSView {
             guard let self else {
                 return
             }
-            cancelRecenterAnimation(restoreCentering: false)
-            clipView.isCenteringEnabled = false
+            cancelRecenterAnimation(restoreConstraints: false)
+            clipView.areConstraintsEnabled = false
             lastPanProposedOrigin = clipView.bounds.origin
         }
         scrollView.userPanned = { [weak self] proposedOrigin in
@@ -343,8 +343,8 @@ final class ZoomableImageView: NSView {
             width: clipView.bounds.width,
             height: clipView.bounds.height
         )
-        let centeredBounds = clipView.centeredBounds(for: proposedBounds)
-        clipView.setBoundsOrigin(centeredBounds.origin)
+        let constrainedBounds = clipView.constrainedBounds(for: proposedBounds)
+        clipView.setBoundsOrigin(constrainedBounds.origin)
         scrollView.reflectScrolledClipView(clipView)
     }
 
@@ -408,18 +408,17 @@ final class ZoomableImageView: NSView {
     }
 
     private func animateRecentering(scrollView: NSScrollView?) {
-        cancelRecenterAnimation(restoreCentering: false)
+        cancelRecenterAnimation(restoreConstraints: false)
 
-        let centeredBounds = clipView.centeredBounds(for: clipView.bounds)
         let start = clipView.bounds.origin
-        let end = centeredBounds.origin
+        let end = clipView.constrainedBounds(for: clipView.bounds).origin
 
         guard
             start.isFinite,
             end.isFinite,
             start != end
         else {
-            clipView.isCenteringEnabled = true
+            clipView.areConstraintsEnabled = true
             return
         }
 
@@ -455,7 +454,7 @@ final class ZoomableImageView: NSView {
                 scrollView?.reflectScrolledClipView(clipView)
 
                 if progress >= 1 {
-                    clipView.isCenteringEnabled = true
+                    clipView.areConstraintsEnabled = true
                     return
                 }
 
@@ -464,7 +463,7 @@ final class ZoomableImageView: NSView {
         }
     }
 
-    private func cancelRecenterAnimation(restoreCentering: Bool = true) {
+    private func cancelRecenterAnimation(restoreConstraints: Bool = true) {
         guard recenterTask != nil else {
             return
         }
@@ -472,8 +471,8 @@ final class ZoomableImageView: NSView {
         recenterTask?.cancel()
         recenterTask = nil
 
-        clipView.isCenteringEnabled = false
-        clipView.isCenteringEnabled = restoreCentering
+        clipView.areConstraintsEnabled = false
+        clipView.areConstraintsEnabled = restoreConstraints
         scrollView.reflectScrolledClipView(clipView)
     }
 }
@@ -811,35 +810,56 @@ private final class MagnifyingScrollView: NSScrollView {
 private final class CenteringClipView: NSClipView {
     private static let overscrollResistance: CGFloat = 0.05
 
-    var isCenteringEnabled = true
+    var areConstraintsEnabled = true
 
     override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
-        guard isCenteringEnabled else {
-            return proposedBounds.isFinite
-                ? proposedBounds
-                : finiteBounds(
-                    for: super.constrainBoundsRect(proposedBounds)
-                )
-        }
+        let finiteBounds = finiteBounds(for: proposedBounds)
 
-        return centeredBounds(for: proposedBounds)
+        return areConstraintsEnabled
+            ? constrainedBounds(for: finiteBounds)
+            : finiteBounds
     }
 
-    func centeredBounds(for proposedBounds: NSRect) -> NSRect {
-        var bounds = super.constrainBoundsRect(proposedBounds)
+    func constrainedBounds(for proposedBounds: NSRect) -> NSRect {
+        var bounds = finiteBounds(for: proposedBounds)
 
         guard let documentView else {
-            return finiteBounds(for: bounds)
+            return bounds
         }
 
-        if documentView.frame.width < bounds.width {
-            bounds.origin.x = (documentView.frame.width - bounds.width) / 2
-        }
-        if documentView.frame.height < bounds.height {
-            bounds.origin.y = (documentView.frame.height - bounds.height) / 2
+        bounds.origin.x = constrainedPosition(
+            bounds.origin.x,
+            documentMinimum: documentView.frame.minX,
+            documentMaximum: documentView.frame.maxX,
+            viewportLength: bounds.width
+        )
+        bounds.origin.y = constrainedPosition(
+            bounds.origin.y,
+            documentMinimum: documentView.frame.minY,
+            documentMaximum: documentView.frame.maxY,
+            viewportLength: bounds.height
+        )
+
+        return bounds
+    }
+
+    private func constrainedPosition(
+        _ proposed: CGFloat,
+        documentMinimum: CGFloat,
+        documentMaximum: CGFloat,
+        viewportLength: CGFloat
+    ) -> CGFloat {
+        let documentLength = documentMaximum - documentMinimum
+        let overflow = documentLength - viewportLength
+
+        if overflow >= 0 {
+            return min(
+                max(proposed, documentMinimum),
+                documentMinimum + overflow
+            )
         }
 
-        return finiteBounds(for: bounds)
+        return documentMinimum + overflow / 2
     }
 
     private func finiteBounds(for proposedBounds: NSRect) -> NSRect {
@@ -869,8 +889,8 @@ private final class CenteringClipView: NSClipView {
             width: currentBounds.width,
             height: currentBounds.height
         )
-        let constrainedCurrentBounds = centeredBounds(for: currentBounds)
-        let constrainedProposedBounds = centeredBounds(for: proposedBounds)
+        let constrainedCurrentBounds = constrainedBounds(for: currentBounds)
+        let constrainedProposedBounds = constrainedBounds(for: proposedBounds)
         var resistedBounds = proposedBounds
 
         resistedBounds.origin.x = resistedPosition(
