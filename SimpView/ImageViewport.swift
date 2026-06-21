@@ -203,6 +203,9 @@ final class ZoomableImageView: NSView {
         scrollView.userPanEnded = { [weak self, weak scrollView] in
             self?.animateRecentering(scrollView: scrollView)
         }
+        scrollView.userZoomToFitRequested = { [weak self] in
+            self?.setZoomToFit(true)
+        }
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(liveScrollWillStart(_:)),
@@ -431,6 +434,7 @@ private final class MagnifyingScrollView: NSScrollView {
     var userPanBegan: (() -> Void)?
     var userPanned: ((NSPoint) -> Void)?
     var userPanEnded: (() -> Void)?
+    var userZoomToFitRequested: (() -> Void)?
 
     private var isMagnifying = false
     private var magnificationAtGestureStart: CGFloat?
@@ -517,6 +521,15 @@ private final class MagnifyingScrollView: NSScrollView {
         NSCursor.pop()
         window?.invalidateCursorRects(for: self)
         userPanEnded?()
+    }
+
+    override func otherMouseDown(with event: NSEvent) {
+        guard event.buttonNumber == 2 else {
+            super.otherMouseDown(with: event)
+            return
+        }
+
+        userZoomToFitRequested?()
     }
 
     override func magnify(with event: NSEvent) {
