@@ -4,9 +4,11 @@ import SwiftUI
 @MainActor
 final class ViewerWindowController: NSWindowController {
     let imageDocument = ImageDocument()
+    let viewportController = ImageViewportController()
 
     var didOpenImage: (() -> Void)?
     var didFailToOpenImage: ((URL) -> Void)?
+    var zoomToFitChanged: (() -> Void)?
 
     private var openTask: Task<Void, Never>?
     private var zoomPercentage: Double?
@@ -16,6 +18,7 @@ final class ViewerWindowController: NSWindowController {
 
         let contentView = ImageViewerView(
             document: imageDocument,
+            viewportController: viewportController,
             openDroppedFile: { [weak self] url in
                 guard let self else {
                     return false
@@ -23,10 +26,6 @@ final class ViewerWindowController: NSWindowController {
 
                 self.open(url)
                 return true
-            },
-            zoomChanged: { [weak self] percentage in
-                self?.zoomPercentage = percentage
-                self?.updateWindowTitle()
             }
         )
         let hostingController = NSHostingController(rootView: contentView)
@@ -45,6 +44,14 @@ final class ViewerWindowController: NSWindowController {
         window.isReleasedWhenClosed = false
 
         self.window = window
+
+        viewportController.zoomChanged = { [weak self] percentage in
+            self?.zoomPercentage = percentage
+            self?.updateWindowTitle()
+        }
+        viewportController.zoomToFitChanged = { [weak self] _ in
+            self?.zoomToFitChanged?()
+        }
     }
 
     @available(*, unavailable)
@@ -67,6 +74,7 @@ final class ViewerWindowController: NSWindowController {
             switch result {
             case .opened:
                 zoomPercentage = nil
+                viewportController.prepareForNewImage()
                 updateWindowTitle()
                 window?.representedURL = url
                 didOpenImage?()
@@ -81,6 +89,26 @@ final class ViewerWindowController: NSWindowController {
     func closeImage() {
         openTask?.cancel()
         imageDocument.close()
+    }
+
+    var isZoomToFit: Bool {
+        viewportController.isZoomToFit
+    }
+
+    func setZoomToFit(_ enabled: Bool) {
+        viewportController.setZoomToFit(enabled)
+    }
+
+    func actualSize() {
+        viewportController.actualSize()
+    }
+
+    func zoomIn() {
+        viewportController.zoomIn()
+    }
+
+    func zoomOut() {
+        viewportController.zoomOut()
     }
 
     private func updateWindowTitle() {

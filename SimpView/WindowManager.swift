@@ -8,6 +8,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
 
     @Published private(set) var activeImageURL: URL?
     @Published private(set) var hasOpenWindows = false
+    @Published private(set) var activeZoomToFit = false
 
     private var windowControllers: [ViewerWindowController] = []
     private weak var lastFocusedWindowController: ViewerWindowController?
@@ -74,12 +75,33 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
+    func setZoomToFit(_ enabled: Bool) {
+        mostRecentWindowController?.setZoomToFit(enabled)
+        updateActiveZoomState()
+    }
+
+    func actualSize() {
+        mostRecentWindowController?.actualSize()
+        updateActiveZoomState()
+    }
+
+    func zoomIn() {
+        mostRecentWindowController?.zoomIn()
+        updateActiveZoomState()
+    }
+
+    func zoomOut() {
+        mostRecentWindowController?.zoomOut()
+        updateActiveZoomState()
+    }
+
     func windowDidBecomeKey(_ notification: Notification) {
         guard let controller = controller(for: notification.object as? NSWindow) else {
             return
         }
         lastFocusedWindowController = controller
         updateActiveImageURL()
+        updateActiveZoomState()
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -94,6 +116,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
             lastFocusedWindowController = windowControllers.last
         }
         updateActiveImageURL()
+        updateActiveZoomState()
     }
 
     private func makeWindow() -> ViewerWindowController {
@@ -115,9 +138,19 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
             }
             self.lastFocusedWindowController = controller
             self.updateActiveImageURL()
+            self.updateActiveZoomState()
         }
         controller.didFailToOpenImage = { [weak self] url in
             self?.presentOpenError(for: url)
+        }
+        controller.zoomToFitChanged = { [weak self, weak controller] in
+            guard
+                let self,
+                controller === self.mostRecentWindowController
+            else {
+                return
+            }
+            self.updateActiveZoomState()
         }
         return controller
     }
@@ -132,6 +165,10 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
 
     private func updateActiveImageURL() {
         activeImageURL = mostRecentWindowController?.imageDocument.fileURL
+    }
+
+    private func updateActiveZoomState() {
+        activeZoomToFit = mostRecentWindowController?.isZoomToFit ?? false
     }
 
     private func updateWindowAvailability() {

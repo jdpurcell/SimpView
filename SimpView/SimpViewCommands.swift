@@ -53,5 +53,44 @@ struct SimpViewCommands: Commands {
 
         CommandGroup(replacing: .saveItem) {
         }
+
+        CommandGroup(before: .toolbar) {
+            Toggle(
+                isOn: Binding(
+                    get: { windowManager.activeZoomToFit },
+                    set: { windowManager.setZoomToFit($0) }
+                )
+            ) {
+                Label("Zoom to Fit", systemImage: "arrow.up.left.and.arrow.down.right")
+            }
+            .keyboardShortcut("9")
+            .disabled(windowManager.activeImageURL == nil)
+
+            Button {
+                windowManager.actualSize()
+            } label: {
+                Label("Actual Size", systemImage: "1.magnifyingglass")
+            }
+            .keyboardShortcut("0")
+            .disabled(windowManager.activeImageURL == nil)
+
+            Divider()
+
+            Button {
+                windowManager.zoomIn()
+            } label: {
+                Label("Zoom In", systemImage: "plus.magnifyingglass")
+            }
+            .keyboardShortcut("+")
+            .disabled(windowManager.activeImageURL == nil)
+
+            Button {
+                windowManager.zoomOut()
+            } label: {
+                Label("Zoom Out", systemImage: "minus.magnifyingglass")
+            }
+            .keyboardShortcut("-")
+            .disabled(windowManager.activeImageURL == nil)
+        }
     }
 }
