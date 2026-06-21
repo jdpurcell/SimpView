@@ -8,6 +8,8 @@ final class ViewerWindowController: NSWindowController {
     var didOpenImage: (() -> Void)?
     var didFailToOpenImage: ((URL) -> Void)?
 
+    private var openTask: Task<Void, Never>?
+
     init() {
         super.init(window: nil)
 
@@ -16,12 +18,8 @@ final class ViewerWindowController: NSWindowController {
                 return false
             }
 
-            if self.open(url) {
-                return true
-            }
-
-            self.didFailToOpenImage?(url)
-            return false
+            self.open(url)
+            return true
         }
         let hostingController = NSHostingController(rootView: contentView)
         let window = NSWindow(contentViewController: hostingController)
@@ -46,15 +44,33 @@ final class ViewerWindowController: NSWindowController {
         fatalError("init(coder:) has not been implemented")
     }
 
-    @discardableResult
-    func open(_ url: URL) -> Bool {
-        guard imageDocument.open(url) else {
-            return false
-        }
+    func open(_ url: URL) {
+        openTask?.cancel()
+        openTask = Task { [weak self] in
+            guard !Task.isCancelled, let self else {
+                return
+            }
 
-        window?.title = imageDocument.displayName
-        window?.representedURL = url
-        didOpenImage?()
-        return true
+            let result = await imageDocument.open(url)
+            guard !Task.isCancelled else {
+                return
+            }
+
+            switch result {
+            case .opened:
+                window?.title = imageDocument.displayName
+                window?.representedURL = url
+                didOpenImage?()
+            case .failed:
+                didFailToOpenImage?(url)
+            case .superseded:
+                break
+            }
+        }
+    }
+
+    func closeImage() {
+        openTask?.cancel()
+        imageDocument.close()
     }
 }

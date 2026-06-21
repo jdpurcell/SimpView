@@ -21,8 +21,8 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         windowControllers.append(controller)
         updateWindowAvailability()
 
-        if let url, !controller.open(url) {
-            presentOpenError(for: url)
+        if let url {
+            controller.open(url)
         }
 
         controller.showWindow(nil)
@@ -52,10 +52,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
                 return
             }
 
-            if !controller.open(url) {
-                self?.presentOpenError(for: url)
-            }
-            self?.updateActiveImageURL()
+            controller.open(url)
         }
     }
 
@@ -90,7 +87,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
             return
         }
 
-        controller(for: window)?.imageDocument.close()
+        controller(for: window)?.closeImage()
         windowControllers.removeAll { $0.window === window }
         updateWindowAvailability()
         if lastFocusedWindowController?.window === window {
