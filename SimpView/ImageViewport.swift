@@ -146,6 +146,29 @@ final class ZoomableImageView: NSView {
         scrollView.userMagnificationEnded = { [weak self, weak scrollView] in
             self?.animateRecentering(scrollView: scrollView)
         }
+        scrollView.userPanBegan = { [weak self] in
+            guard let self else {
+                return
+            }
+            cancelRecenterAnimation(restoreCentering: false)
+            clipView.isCenteringEnabled = false
+        }
+        scrollView.userPanned = { [weak self] proposedOrigin in
+            guard let self else {
+                return
+            }
+            let bounds = clipView.resistedBounds(
+                for: NSRect(
+                    origin: proposedOrigin,
+                    size: clipView.bounds.size
+                )
+            )
+            clipView.setBoundsOrigin(bounds.origin)
+            scrollView.reflectScrolledClipView(clipView)
+        }
+        scrollView.userPanEnded = { [weak self, weak scrollView] in
+            self?.animateRecentering(scrollView: scrollView)
+        }
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(liveScrollWillStart(_:)),
@@ -363,9 +386,68 @@ private final class MagnifyingScrollView: NSScrollView {
     var userMagnificationBegan: (() -> Void)?
     var userMagnified: ((CGFloat, NSPoint) -> Void)?
     var userMagnificationEnded: (() -> Void)?
+    var userPanBegan: (() -> Void)?
+    var userPanned: ((NSPoint) -> Void)?
+    var userPanEnded: (() -> Void)?
 
     private var isMagnifying = false
     fileprivate var isScrollSequenceActive = false
+    private var dragStartLocation: NSPoint?
+    private var dragStartOrigin: NSPoint?
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: .openHand)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard event.buttonNumber == 0 else {
+            super.mouseDown(with: event)
+            return
+        }
+
+        userPanBegan?()
+        dragStartLocation = event.locationInWindow
+        dragStartOrigin = contentView.bounds.origin
+        NSCursor.closedHand.push()
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard
+            let dragStartLocation,
+            let dragStartOrigin
+        else {
+            super.mouseDragged(with: event)
+            return
+        }
+
+        let location = event.locationInWindow
+        let scale = magnification
+        guard scale.isFinite, scale > 0 else {
+            return
+        }
+
+        let origin = NSPoint(
+            x: dragStartOrigin.x
+                - (location.x - dragStartLocation.x) / scale,
+            y: dragStartOrigin.y
+                - (location.y - dragStartLocation.y) / scale
+        )
+        userPanned?(origin)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard dragStartLocation != nil else {
+            super.mouseUp(with: event)
+            return
+        }
+
+        dragStartLocation = nil
+        dragStartOrigin = nil
+        NSCursor.pop()
+        window?.invalidateCursorRects(for: self)
+        userPanEnded?()
+    }
 
     override func magnify(with event: NSEvent) {
         guard !isScrollSequenceActive else {
@@ -403,6 +485,8 @@ private final class MagnifyingScrollView: NSScrollView {
 }
 
 private final class CenteringClipView: NSClipView {
+    private static let overscrollResistance: CGFloat = 0.05
+
     var isCenteringEnabled = true
 
     override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
@@ -428,6 +512,29 @@ private final class CenteringClipView: NSClipView {
         }
 
         return bounds
+    }
+
+    func resistedBounds(for proposedBounds: NSRect) -> NSRect {
+        let constrainedBounds = centeredBounds(for: proposedBounds)
+        var bounds = proposedBounds
+
+        bounds.origin.x = resistedPosition(
+            proposedBounds.origin.x,
+            constrained: constrainedBounds.origin.x
+        )
+        bounds.origin.y = resistedPosition(
+            proposedBounds.origin.y,
+            constrained: constrainedBounds.origin.y
+        )
+
+        return bounds
+    }
+
+    private func resistedPosition(
+        _ proposed: CGFloat,
+        constrained: CGFloat
+    ) -> CGFloat {
+        constrained + (proposed - constrained) * Self.overscrollResistance
     }
 }
 
