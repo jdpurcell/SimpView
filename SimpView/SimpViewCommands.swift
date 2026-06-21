@@ -54,6 +54,24 @@ struct SimpViewCommands: Commands {
         CommandGroup(replacing: .saveItem) {
         }
 
+        CommandMenu("Go") {
+            Button {
+                windowManager.previousImage()
+            } label: {
+                Label("Previous Image", systemImage: "chevron.left")
+            }
+            .keyboardShortcut(.leftArrow, modifiers: [])
+            .disabled(!windowManager.canNavigateToPreviousImage)
+
+            Button {
+                windowManager.nextImage()
+            } label: {
+                Label("Next Image", systemImage: "chevron.right")
+            }
+            .keyboardShortcut(.rightArrow, modifiers: [])
+            .disabled(!windowManager.canNavigateToNextImage)
+        }
+
         CommandGroup(before: .toolbar) {
             Toggle(
                 isOn: Binding(

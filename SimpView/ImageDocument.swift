@@ -5,8 +5,9 @@ import ImageIO
 @MainActor
 final class ImageDocument: ObservableObject {
     enum OpenResult {
-        case opened
-        case failed
+        case opened(URL)
+        case failed(URL)
+        case unchanged
         case superseded
     }
 
@@ -14,7 +15,6 @@ final class ImageDocument: ObservableObject {
     @Published private(set) var fileURL: URL?
     @Published private(set) var isShowingLoadingIndicator = false
 
-    private var isAccessingSecurityScopedResource = false
     private var loadingIndicatorTask: Task<Void, Never>?
     private var loadIdentifier = UUID()
 
@@ -23,48 +23,54 @@ final class ImageDocument: ObservableObject {
     }
 
     func open(_ url: URL) async -> OpenResult {
+        await open {
+            url
+        }
+    }
+
+    func open(
+        resolvingURL: () async -> URL?
+    ) async -> OpenResult {
         let identifier = UUID()
         loadIdentifier = identifier
         isShowingLoadingIndicator = false
         scheduleLoadingIndicator(for: identifier)
 
-        let beganAccess = url.startAccessingSecurityScopedResource()
+        guard let url = await resolvingURL() else {
+            finishLoading(identifier: identifier)
+            return loadIdentifier == identifier ? .unchanged : .superseded
+        }
+
+        guard loadIdentifier == identifier, !Task.isCancelled else {
+            return .superseded
+        }
+
         let decodedImage = await Task.detached(priority: .userInitiated) {
             Self.decodeImage(at: url)
         }.value
 
         guard loadIdentifier == identifier else {
-            if beganAccess {
-                url.stopAccessingSecurityScopedResource()
-            }
             return .superseded
         }
 
-        loadingIndicatorTask?.cancel()
-        isShowingLoadingIndicator = false
+        finishLoading(identifier: identifier)
 
         guard let decodedImage else {
-            if beganAccess {
-                url.stopAccessingSecurityScopedResource()
-            }
-            return .failed
+            return .failed(url)
         }
 
-        stopAccessingCurrentFile()
         image = NSImage(
             cgImage: decodedImage,
             size: NSSize(width: decodedImage.width, height: decodedImage.height)
         )
         fileURL = url
-        isAccessingSecurityScopedResource = beganAccess
-        return .opened
+        return .opened(url)
     }
 
     func close() {
         loadIdentifier = UUID()
         loadingIndicatorTask?.cancel()
         isShowingLoadingIndicator = false
-        stopAccessingCurrentFile()
     }
 
     private func scheduleLoadingIndicator(for identifier: UUID) {
@@ -82,11 +88,14 @@ final class ImageDocument: ObservableObject {
         }
     }
 
-    private func stopAccessingCurrentFile() {
-        if isAccessingSecurityScopedResource, let fileURL {
-            fileURL.stopAccessingSecurityScopedResource()
+    private func finishLoading(identifier: UUID) {
+        guard loadIdentifier == identifier else {
+            return
         }
-        isAccessingSecurityScopedResource = false
+
+        loadingIndicatorTask?.cancel()
+        loadingIndicatorTask = nil
+        isShowingLoadingIndicator = false
     }
 
     nonisolated private static func decodeImage(at url: URL) -> CGImage? {
