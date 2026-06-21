@@ -238,9 +238,17 @@ final class ZoomableImageView: NSView {
 
     override func layout() {
         super.layout()
+
+        let previousViewportCenter = isZoomToFit
+            ? nil
+            : viewportCenterInDocument()
+
         scrollView.frame = bounds
+
         if isZoomToFit {
             applyZoomToFit()
+        } else if let previousViewportCenter {
+            centerViewport(at: previousViewportCenter)
         }
     }
 
@@ -287,15 +295,35 @@ final class ZoomableImageView: NSView {
             return
         }
 
-        let viewportCenter = NSPoint(
-            x: scrollView.contentView.bounds.midX,
-            y: scrollView.contentView.bounds.midY
-        )
+        let viewportCenter = viewportCenterInDocument()
         scrollView.setMagnification(
             clampedMagnification(magnification),
             centeredAt: viewportCenter
         )
         reportZoom()
+    }
+
+    private func viewportCenterInDocument() -> NSPoint {
+        NSPoint(
+            x: clipView.bounds.midX,
+            y: clipView.bounds.midY
+        )
+    }
+
+    private func centerViewport(at point: NSPoint) {
+        guard point.isFinite else {
+            return
+        }
+
+        let proposedBounds = NSRect(
+            x: point.x - clipView.bounds.width / 2,
+            y: point.y - clipView.bounds.height / 2,
+            width: clipView.bounds.width,
+            height: clipView.bounds.height
+        )
+        let centeredBounds = clipView.centeredBounds(for: proposedBounds)
+        clipView.setBoundsOrigin(centeredBounds.origin)
+        scrollView.reflectScrolledClipView(clipView)
     }
 
     private func applyZoomToFit() {
