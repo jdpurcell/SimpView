@@ -18,6 +18,7 @@ final class AppPreferences: NSObject, ObservableObject {
     @Published private(set) var zoomStepPercent: Int
     @Published private(set) var imageSortField: ImageSortField
     @Published private(set) var imageSortDirection: SortDirection
+    @Published private(set) var navigationIntervalMilliseconds: Int
 
     var zoomStep: CGFloat {
         1 + CGFloat(zoomStepPercent) / 100
@@ -27,9 +28,11 @@ final class AppPreferences: NSObject, ObservableObject {
         static let zoomStep = "zoomStep"
         static let imageSortField = "imageSortField"
         static let imageSortDirection = "imageSortDirection"
+        static let navigationInterval = "navigationInterval"
     }
 
     private static let defaultZoomStepPercent = 25
+    private static let defaultNavigationIntervalMilliseconds = 80
 
     private let defaults: UserDefaults
 
@@ -42,6 +45,8 @@ final class AppPreferences: NSObject, ObservableObject {
         zoomStepPercent = Self.readZoomStepPercent(from: defaults)
         imageSortField = Self.readImageSortField(from: defaults)
         imageSortDirection = Self.readImageSortDirection(from: defaults)
+        navigationIntervalMilliseconds =
+            Self.readNavigationIntervalMilliseconds(from: defaults)
         super.init()
 
         NotificationCenter.default.addObserver(
@@ -67,6 +72,12 @@ final class AppPreferences: NSObject, ObservableObject {
         if imageSortDirection != newImageSortDirection {
             imageSortDirection = newImageSortDirection
         }
+
+        let newNavigationInterval =
+            Self.readNavigationIntervalMilliseconds(from: defaults)
+        if navigationIntervalMilliseconds != newNavigationInterval {
+            navigationIntervalMilliseconds = newNavigationInterval
+        }
     }
 
     func setZoomStepPercent(_ value: Int) {
@@ -75,6 +86,15 @@ final class AppPreferences: NSObject, ObservableObject {
         }
 
         defaults.set(value, forKey: Key.zoomStep)
+        refresh()
+    }
+
+    func setNavigationIntervalMilliseconds(_ value: Int) {
+        guard value > 0 else {
+            return
+        }
+
+        defaults.set(value, forKey: Key.navigationInterval)
         refresh()
     }
 
@@ -117,5 +137,20 @@ final class AppPreferences: NSObject, ObservableObject {
         }
 
         return direction
+    }
+
+    private static func readNavigationIntervalMilliseconds(
+        from defaults: UserDefaults
+    ) -> Int {
+        guard
+            let value = defaults.object(
+                forKey: Key.navigationInterval
+            ) as? NSNumber,
+            value.intValue > 0
+        else {
+            return defaultNavigationIntervalMilliseconds
+        }
+
+        return value.intValue
     }
 }

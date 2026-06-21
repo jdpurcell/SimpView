@@ -9,6 +9,7 @@ final class ViewerWindowController: NSWindowController {
 
     var didOpenImage: (() -> Void)?
     var didFailToOpenImage: ((URL) -> Void)?
+    var willOpenImage: (() -> Void)?
     var zoomModeChanged: (() -> Void)?
     var navigationStateChanged: (() -> Void)?
 
@@ -31,7 +32,7 @@ final class ViewerWindowController: NSWindowController {
             }
         )
         let hostingController = NSHostingController(rootView: contentView)
-        let window = NSWindow(contentViewController: hostingController)
+        let window = ViewerWindow(contentViewController: hostingController)
 
         window.title = "SimpView"
         window.setContentSize(NSSize(width: 900, height: 650))
@@ -66,6 +67,7 @@ final class ViewerWindowController: NSWindowController {
     }
 
     func open(_ url: URL) {
+        willOpenImage?()
         folderNavigator.prepareForExternalOpen(url)
         open {
             url
@@ -78,6 +80,23 @@ final class ViewerWindowController: NSWindowController {
 
     func nextImage() {
         navigate(by: 1)
+    }
+
+    func navigateByKeyboard(by offset: Int) async -> Bool {
+        guard let currentURL = imageDocument.fileURL else {
+            return false
+        }
+
+        return await performOpen { [folderNavigator] in
+            await folderNavigator.adjacentURL(
+                from: currentURL,
+                offset: offset
+            )
+        }
+    }
+
+    func waitForCurrentOpen() async {
+        await openTask?.value
     }
 
     var canNavigateToPreviousImage: Bool {
@@ -110,27 +129,36 @@ final class ViewerWindowController: NSWindowController {
                 return
             }
 
-            let result = await imageDocument.open(
-                resolvingURL: resolvingURL
-            )
-            guard !Task.isCancelled else {
-                return
-            }
+            _ = await performOpen(resolvingURL: resolvingURL)
+        }
+    }
 
-            switch result {
-            case .opened(let url):
-                folderNavigator.didOpen(url)
-                zoomPercentage = nil
-                viewportController.prepareForNewImage()
-                updateWindowTitle()
-                window?.representedURL = url
-                didOpenImage?()
-                navigationStateChanged?()
-            case .failed(let url):
-                didFailToOpenImage?(url)
-            case .unchanged, .superseded:
-                break
-            }
+    @discardableResult
+    private func performOpen(
+        resolvingURL: () async -> URL?
+    ) async -> Bool {
+        let result = await imageDocument.open(
+            resolvingURL: resolvingURL
+        )
+        guard !Task.isCancelled else {
+            return false
+        }
+
+        switch result {
+        case .opened(let url):
+            folderNavigator.didOpen(url)
+            zoomPercentage = nil
+            viewportController.prepareForNewImage()
+            updateWindowTitle()
+            window?.representedURL = url
+            didOpenImage?()
+            navigationStateChanged?()
+            return true
+        case .failed(let url):
+            didFailToOpenImage?(url)
+            return false
+        case .unchanged, .superseded:
+            return false
         }
     }
 

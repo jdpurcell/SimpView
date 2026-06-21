@@ -17,6 +17,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppPreferences.shared.refresh()
     }
 
+    func applicationWillResignActive(_ notification: Notification) {
+        WindowManager.shared.stopKeyboardNavigation()
+    }
+
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
             WindowManager.shared.newWindow(opening: url)

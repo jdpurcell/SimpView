@@ -15,12 +15,26 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
 
     private var windowControllers: [ViewerWindowController] = []
     private weak var lastFocusedWindowController: ViewerWindowController?
+    private weak var keyboardNavigationController: ViewerWindowController?
+    private var keyboardNavigationDirection: Int?
+    private var hasKeyboardNavigationRepeated = false
+    private var keyboardNavigationIdentifier = UUID()
+    private var keyboardNavigationTask: Task<Void, Never>?
 
     var hasNoWindows: Bool {
         windowControllers.isEmpty
     }
 
+    func stopKeyboardNavigation() {
+        // Invalidate the loop without interrupting an image already decoding.
+        keyboardNavigationDirection = nil
+        keyboardNavigationController = nil
+        hasKeyboardNavigationRepeated = false
+        keyboardNavigationIdentifier = UUID()
+    }
+
     func newWindow(opening url: URL? = nil) {
+        stopKeyboardNavigation()
         let controller = makeWindowController()
         windowControllers.append(controller)
         updateWindowAvailability()
@@ -36,6 +50,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     func openImage() {
+        stopKeyboardNavigation()
         let controller = mostRecentWindowController ?? makeWindow()
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.image]
@@ -61,10 +76,12 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     func closeActiveWindow() {
+        stopKeyboardNavigation()
         (NSApp.keyWindow ?? mostRecentWindowController?.window)?.performClose(nil)
     }
 
     func closeAllWindows() {
+        stopKeyboardNavigation()
         let windows = windowControllers.compactMap(\.window)
         for window in windows {
             window.performClose(nil)
@@ -79,10 +96,12 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     func previousImage() {
+        stopKeyboardNavigation()
         mostRecentWindowController?.previousImage()
     }
 
     func nextImage() {
+        stopKeyboardNavigation()
         mostRecentWindowController?.nextImage()
     }
 
@@ -121,11 +140,27 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         updateActiveNavigationState()
     }
 
+    func windowDidResignKey(_ notification: Notification) {
+        guard
+            let controller = controller(
+                for: notification.object as? NSWindow
+            ),
+            controller === keyboardNavigationController
+        else {
+            return
+        }
+
+        stopKeyboardNavigation()
+    }
+
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else {
             return
         }
 
+        if controller(for: window) === keyboardNavigationController {
+            stopKeyboardNavigation()
+        }
         controller(for: window)?.closeImage()
         windowControllers.removeAll { $0.window === window }
         updateWindowAvailability()
@@ -150,6 +185,10 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     private func makeWindowController() -> ViewerWindowController {
         let controller = ViewerWindowController()
         controller.window?.delegate = self
+        (controller.window as? ViewerWindow)?
+            .keyboardNavigationHandler = { [weak self] event in
+                self?.handleKeyboardNavigationEvent(event) ?? false
+            }
         controller.didOpenImage = { [weak self, weak controller] in
             guard let self, let controller else {
                 return
@@ -158,6 +197,9 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
             self.updateActiveImageURL()
             self.updateActiveZoomState()
             self.updateActiveNavigationState()
+        }
+        controller.willOpenImage = { [weak self] in
+            self?.stopKeyboardNavigation()
         }
         controller.didFailToOpenImage = { [weak self] url in
             self?.presentOpenError(for: url)
@@ -209,6 +251,141 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
 
     private func updateWindowAvailability() {
         hasOpenWindows = !windowControllers.isEmpty
+    }
+
+    private func handleKeyboardNavigationEvent(
+        _ event: NSEvent
+    ) -> Bool {
+        guard let direction = navigationDirection(for: event) else {
+            return false
+        }
+
+        if event.type == .keyUp {
+            if keyboardNavigationDirection == direction {
+                stopKeyboardNavigation()
+                return true
+            }
+            return false
+        }
+
+        let disallowedModifiers: NSEvent.ModifierFlags = [
+            .command,
+            .control,
+            .option,
+            .shift,
+        ]
+        guard event.modifierFlags.intersection(disallowedModifiers).isEmpty,
+            let controller = controller(for: NSApp.keyWindow),
+            controller.imageDocument.fileURL != nil
+        else {
+            return false
+        }
+
+        if event.isARepeat {
+            hasKeyboardNavigationRepeated = true
+            startKeyboardNavigationLoop()
+            return true
+        }
+
+        stopKeyboardNavigation()
+        keyboardNavigationDirection = direction
+        keyboardNavigationController = controller
+        if direction < 0 {
+            controller.previousImage()
+        } else {
+            controller.nextImage()
+        }
+        return true
+    }
+
+    private func navigationDirection(for event: NSEvent) -> Int? {
+        switch event.keyCode {
+        case 123:
+            -1
+        case 124:
+            1
+        default:
+            nil
+        }
+    }
+
+    private func startKeyboardNavigationLoop() {
+        guard keyboardNavigationTask == nil else {
+            return
+        }
+
+        let identifier = keyboardNavigationIdentifier
+        keyboardNavigationTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+
+            guard
+                keyboardNavigationIdentifier == identifier,
+                let controller = keyboardNavigationController
+            else {
+                keyboardNavigationTask = nil
+                if keyboardNavigationDirection != nil,
+                    keyboardNavigationController != nil,
+                    hasKeyboardNavigationRepeated
+                {
+                    startKeyboardNavigationLoop()
+                }
+                return
+            }
+
+            await controller.waitForCurrentOpen()
+
+            while
+                keyboardNavigationIdentifier == identifier,
+                keyboardNavigationController === controller,
+                let direction = keyboardNavigationDirection
+            {
+                let startedAt = ProcessInfo.processInfo.systemUptime
+                let didNavigate = await controller.navigateByKeyboard(
+                    by: direction
+                )
+
+                guard
+                    keyboardNavigationIdentifier == identifier,
+                    keyboardNavigationController === controller
+                else {
+                    break
+                }
+
+                if !didNavigate {
+                    if keyboardNavigationDirection == direction {
+                        stopKeyboardNavigation()
+                    }
+                    continue
+                }
+
+                let elapsedMilliseconds =
+                    (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000
+                let remainingMilliseconds =
+                    Double(
+                        AppPreferences.shared
+                            .navigationIntervalMilliseconds
+                    ) - elapsedMilliseconds
+
+                if remainingMilliseconds > 0 {
+                    try? await Task.sleep(
+                        for: .milliseconds(
+                            Int(remainingMilliseconds.rounded(.up))
+                        )
+                    )
+                }
+            }
+
+            keyboardNavigationTask = nil
+            if keyboardNavigationIdentifier != identifier,
+                keyboardNavigationDirection != nil,
+                keyboardNavigationController != nil,
+                hasKeyboardNavigationRepeated
+            {
+                startKeyboardNavigationLoop()
+            }
+        }
     }
 
     private func presentOpenError(for url: URL) {
