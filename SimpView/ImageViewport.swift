@@ -146,6 +146,27 @@ final class ZoomableImageView: NSView {
         scrollView.userMagnificationEnded = { [weak self, weak scrollView] in
             self?.animateRecentering(scrollView: scrollView)
         }
+        scrollView.userScrollZoomBegan = { [weak self] in
+            guard let self else {
+                return
+            }
+            cancelRecenterAnimation(restoreCentering: false)
+            setManualZoomMode()
+            clipView.isCenteringEnabled = false
+        }
+        scrollView.userScrollZoomed = { [weak self] factor, point in
+            guard let self else {
+                return
+            }
+            scrollView.setMagnification(
+                clampedMagnification(scrollView.magnification * factor),
+                centeredAt: point
+            )
+            reportZoom()
+        }
+        scrollView.userScrollZoomEnded = { [weak self, weak scrollView] in
+            self?.animateRecentering(scrollView: scrollView)
+        }
         scrollView.userPanBegan = { [weak self] in
             guard let self else {
                 return
@@ -386,6 +407,9 @@ private final class MagnifyingScrollView: NSScrollView {
     var userMagnificationBegan: (() -> Void)?
     var userMagnified: ((CGFloat, NSPoint) -> Void)?
     var userMagnificationEnded: (() -> Void)?
+    var userScrollZoomBegan: (() -> Void)?
+    var userScrollZoomed: ((CGFloat, NSPoint) -> Void)?
+    var userScrollZoomEnded: (() -> Void)?
     var userPanBegan: (() -> Void)?
     var userPanned: ((NSPoint) -> Void)?
     var userPanEnded: (() -> Void)?
@@ -394,6 +418,8 @@ private final class MagnifyingScrollView: NSScrollView {
     fileprivate var isScrollSequenceActive = false
     private var dragStartLocation: NSPoint?
     private var dragStartOrigin: NSPoint?
+    private var isScrollZooming = false
+    private var scrollZoomEndTask: Task<Void, Never>?
 
     override func resetCursorRects() {
         super.resetCursorRects()
@@ -479,6 +505,56 @@ private final class MagnifyingScrollView: NSScrollView {
         if event.phase == .ended || event.phase == .cancelled {
             isMagnifying = false
             userMagnificationEnded?()
+        }
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        if event.modifierFlags.contains(.command) {
+            super.scrollWheel(with: event)
+            return
+        }
+
+        let horizontalDelta = event.scrollingDeltaX
+        let verticalDelta = event.scrollingDeltaY
+        guard
+            verticalDelta != 0,
+            abs(verticalDelta) >= abs(horizontalDelta),
+            let documentView
+        else {
+            return
+        }
+
+        if !isScrollZooming {
+            isScrollZooming = true
+            userScrollZoomBegan?()
+        }
+
+        let normalizedDelta = event.hasPreciseScrollingDeltas
+            ? verticalDelta
+            : verticalDelta * 120
+        let speedAdjustment = 2.0
+        let stepAmount = abs(normalizedDelta) / 120 * speedAdjustment
+        let stepFactor = 1 + (ZoomableImageView.zoomStep - 1) * stepAmount
+        let factor = normalizedDelta > 0 ? stepFactor : 1 / stepFactor
+
+        let locationInClipView = contentView.convert(
+            event.locationInWindow,
+            from: nil
+        )
+        let locationInDocument = documentView.convert(
+            locationInClipView,
+            from: contentView
+        )
+        userScrollZoomed?(factor, locationInDocument)
+
+        scrollZoomEndTask?.cancel()
+        scrollZoomEndTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(80))
+            guard !Task.isCancelled, let self else {
+                return
+            }
+            isScrollZooming = false
+            userScrollZoomEnded?()
         }
     }
 
