@@ -105,7 +105,9 @@ struct ImageViewport: NSViewRepresentable {
 
 @MainActor
 final class ZoomableImageView: NSView {
-    static let zoomStep: CGFloat = 1.25
+    static var zoomStep: CGFloat {
+        AppPreferences.shared.zoomStep
+    }
 
     private struct ZoomAnchor {
         let documentPoint: NSPoint

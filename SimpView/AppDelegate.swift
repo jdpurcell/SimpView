@@ -13,6 +13,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        AppPreferences.shared.refresh()
+    }
+
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
             WindowManager.shared.newWindow(opening: url)
