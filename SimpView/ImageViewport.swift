@@ -1,12 +1,26 @@
 import AppKit
 import SwiftUI
 
+enum ViewportZoomMode {
+    case manual
+    case fit
+    case fill
+}
+
 @MainActor
 final class ImageViewportController {
-    private(set) var isZoomToFit = true
+    private(set) var zoomMode: ViewportZoomMode = .fit
+
+    var isZoomToFit: Bool {
+        zoomMode == .fit
+    }
+
+    var isZoomToFill: Bool {
+        zoomMode == .fill
+    }
 
     var zoomChanged: ((Double?) -> Void)?
-    var zoomToFitChanged: ((Bool) -> Void)?
+    var zoomModeChanged: (() -> Void)?
 
     private weak var viewport: ZoomableImageView?
 
@@ -16,14 +30,14 @@ final class ImageViewportController {
         viewport.zoomChanged = { [weak self] percentage in
             self?.zoomChanged?(percentage)
         }
-        viewport.zoomToFitChanged = { [weak self] enabled in
+        viewport.zoomModeChanged = { [weak self] mode in
             guard let self else {
                 return
             }
-            isZoomToFit = enabled
-            zoomToFitChanged?(enabled)
+            zoomMode = mode
+            zoomModeChanged?()
         }
-        viewport.setZoomToFit(isZoomToFit)
+        viewport.setZoomMode(zoomMode)
     }
 
     func detach(_ viewport: ZoomableImageView) {
@@ -33,15 +47,15 @@ final class ImageViewportController {
     }
 
     func prepareForNewImage() {
-        isZoomToFit = true
-        zoomToFitChanged?(true)
-        viewport?.setZoomToFit(true)
+        setZoomMode(.fit)
     }
 
     func setZoomToFit(_ enabled: Bool) {
-        isZoomToFit = enabled
-        zoomToFitChanged?(enabled)
-        viewport?.setZoomToFit(enabled)
+        setZoomMode(enabled ? .fit : .manual)
+    }
+
+    func setZoomToFill(_ enabled: Bool) {
+        setZoomMode(enabled ? .fill : .manual)
     }
 
     func actualSize() {
@@ -54,6 +68,12 @@ final class ImageViewportController {
 
     func zoomOut() {
         viewport?.zoom(by: 1 / ZoomableImageView.zoomStep)
+    }
+
+    private func setZoomMode(_ mode: ViewportZoomMode) {
+        zoomMode = mode
+        zoomModeChanged?()
+        viewport?.setZoomMode(mode)
     }
 }
 
@@ -89,7 +109,7 @@ final class ZoomableImageView: NSView {
     static let scrollZoomSpeed: CGFloat = 2
 
     var zoomChanged: ((Double?) -> Void)?
-    var zoomToFitChanged: ((Bool) -> Void)?
+    var zoomModeChanged: ((ViewportZoomMode) -> Void)?
     weak var controller: ImageViewportController?
 
     var image: NSImage? {
@@ -100,6 +120,7 @@ final class ZoomableImageView: NSView {
             cancelRecenterAnimation()
             imageView.image = image
             imageView.frame = NSRect(origin: .zero, size: image?.size ?? .zero)
+            shouldCenterAutomaticZoom = true
             needsLayout = true
         }
     }
@@ -107,8 +128,9 @@ final class ZoomableImageView: NSView {
     private let scrollView = MagnifyingScrollView()
     private let clipView = CenteringClipView()
     private let imageView = NSImageView()
-    private var isZoomToFit = true
-    private var isApplyingFit = false
+    private var zoomMode: ViewportZoomMode = .fit
+    private var isApplyingAutomaticZoom = false
+    private var shouldCenterAutomaticZoom = true
     private var recenterTask: Task<Void, Never>?
 
     override init(frame frameRect: NSRect) {
@@ -203,8 +225,8 @@ final class ZoomableImageView: NSView {
         scrollView.userPanEnded = { [weak self, weak scrollView] in
             self?.animateRecentering(scrollView: scrollView)
         }
-        scrollView.userZoomToFitRequested = { [weak self] in
-            self?.setZoomToFit(true)
+        scrollView.userAutomaticZoomRequested = { [weak self] mode in
+            self?.setZoomMode(mode, centeringImage: true)
         }
         NotificationCenter.default.addObserver(
             self,
@@ -239,32 +261,48 @@ final class ZoomableImageView: NSView {
     override func layout() {
         super.layout()
 
-        let previousViewportCenter = isZoomToFit
-            ? nil
-            : viewportCenterInDocument()
+        let shouldPreserveViewportCenter =
+            zoomMode == .manual
+                || (zoomMode == .fill && !shouldCenterAutomaticZoom)
+        let previousViewportCenter = shouldPreserveViewportCenter
+            ? viewportCenterInDocument()
+            : nil
 
         scrollView.frame = bounds
 
-        if isZoomToFit {
-            applyZoomToFit()
+        if zoomMode != .manual {
+            if applyAutomaticZoom(centeredAt: previousViewportCenter) {
+                shouldCenterAutomaticZoom = false
+            }
         } else if let previousViewportCenter {
             centerViewport(at: previousViewportCenter)
         }
     }
 
-    func setZoomToFit(_ enabled: Bool) {
+    func setZoomMode(
+        _ mode: ViewportZoomMode,
+        centeringImage: Bool = false
+    ) {
         cancelRecenterAnimation()
 
-        guard isZoomToFit != enabled else {
-            if enabled {
+        if centeringImage {
+            shouldCenterAutomaticZoom = true
+        }
+
+        guard zoomMode != mode else {
+            if mode != .manual {
                 needsLayout = true
+                layoutSubtreeIfNeeded()
             }
             return
         }
 
-        isZoomToFit = enabled
-        zoomToFitChanged?(enabled)
-        if enabled {
+        zoomMode = mode
+        if mode != .manual {
+            shouldCenterAutomaticZoom = true
+        }
+        zoomModeChanged?(mode)
+        if mode != .manual {
             needsLayout = true
             layoutSubtreeIfNeeded()
         }
@@ -283,11 +321,11 @@ final class ZoomableImageView: NSView {
     }
 
     private func setManualZoomMode() {
-        guard isZoomToFit else {
+        guard zoomMode != .manual else {
             return
         }
-        isZoomToFit = false
-        zoomToFitChanged?(false)
+        zoomMode = .manual
+        zoomModeChanged?(.manual)
     }
 
     private func setMagnification(_ magnification: CGFloat) {
@@ -326,34 +364,43 @@ final class ZoomableImageView: NSView {
         scrollView.reflectScrolledClipView(clipView)
     }
 
-    private func applyZoomToFit() {
+    @discardableResult
+    private func applyAutomaticZoom(centeredAt focalPoint: NSPoint?) -> Bool {
         guard
-            !isApplyingFit,
+            !isApplyingAutomaticZoom,
             let image,
             image.size.width > 0,
             image.size.height > 0,
             scrollView.contentSize.width > 0,
             scrollView.contentSize.height > 0
         else {
-            return
+            return false
         }
 
-        isApplyingFit = true
-        defer { isApplyingFit = false }
+        isApplyingAutomaticZoom = true
+        defer { isApplyingAutomaticZoom = false }
 
-        let magnification = min(
-            scrollView.contentSize.width / image.size.width,
-            scrollView.contentSize.height / image.size.height
-        )
-        let imageCenter = NSPoint(
+        let widthScale = scrollView.contentSize.width / image.size.width
+        let heightScale = scrollView.contentSize.height / image.size.height
+        let magnification = switch zoomMode {
+        case .fit:
+            min(widthScale, heightScale)
+        case .fill:
+            max(widthScale, heightScale)
+        case .manual:
+            scrollView.magnification
+        }
+        let zoomCenter = focalPoint ?? NSPoint(
             x: image.size.width / 2,
             y: image.size.height / 2
         )
         scrollView.setMagnification(
             clampedMagnification(magnification),
-            centeredAt: imageCenter
+            centeredAt: zoomCenter
         )
+        centerViewport(at: zoomCenter)
         reportZoom()
+        return true
     }
 
     private func clampedMagnification(_ value: CGFloat) -> CGFloat {
@@ -462,7 +509,7 @@ private final class MagnifyingScrollView: NSScrollView {
     var userPanBegan: (() -> Void)?
     var userPanned: ((NSPoint) -> Void)?
     var userPanEnded: (() -> Void)?
-    var userZoomToFitRequested: (() -> Void)?
+    var userAutomaticZoomRequested: ((ViewportZoomMode) -> Void)?
 
     private var isMagnifying = false
     private var magnificationAtGestureStart: CGFloat?
@@ -557,7 +604,9 @@ private final class MagnifyingScrollView: NSScrollView {
             return
         }
 
-        userZoomToFitRequested?()
+        let mode: ViewportZoomMode =
+            event.modifierFlags.contains(.command) ? .fill : .fit
+        userAutomaticZoomRequested?(mode)
     }
 
     override func magnify(with event: NSEvent) {

@@ -9,6 +9,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     @Published private(set) var activeImageURL: URL?
     @Published private(set) var hasOpenWindows = false
     @Published private(set) var activeZoomToFit = false
+    @Published private(set) var activeZoomToFill = false
 
     private var windowControllers: [ViewerWindowController] = []
     private weak var lastFocusedWindowController: ViewerWindowController?
@@ -80,6 +81,11 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         updateActiveZoomState()
     }
 
+    func setZoomToFill(_ enabled: Bool) {
+        mostRecentWindowController?.setZoomToFill(enabled)
+        updateActiveZoomState()
+    }
+
     func actualSize() {
         mostRecentWindowController?.actualSize()
         updateActiveZoomState()
@@ -143,7 +149,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         controller.didFailToOpenImage = { [weak self] url in
             self?.presentOpenError(for: url)
         }
-        controller.zoomToFitChanged = { [weak self, weak controller] in
+        controller.zoomModeChanged = { [weak self, weak controller] in
             guard
                 let self,
                 controller === self.mostRecentWindowController
@@ -169,6 +175,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
 
     private func updateActiveZoomState() {
         activeZoomToFit = mostRecentWindowController?.isZoomToFit ?? false
+        activeZoomToFill = mostRecentWindowController?.isZoomToFill ?? false
     }
 
     private func updateWindowAvailability() {

@@ -66,6 +66,17 @@ struct SimpViewCommands: Commands {
             .keyboardShortcut("9")
             .disabled(windowManager.activeImageURL == nil)
 
+            Toggle(
+                isOn: Binding(
+                    get: { windowManager.activeZoomToFill },
+                    set: { windowManager.setZoomToFill($0) }
+                )
+            ) {
+                Label("Zoom to Fill", systemImage: "arrow.down.right.and.arrow.up.left")
+            }
+            .keyboardShortcut("8")
+            .disabled(windowManager.activeImageURL == nil)
+
             Button {
                 windowManager.actualSize()
             } label: {
@@ -73,8 +84,6 @@ struct SimpViewCommands: Commands {
             }
             .keyboardShortcut("0")
             .disabled(windowManager.activeImageURL == nil)
-
-            Divider()
 
             Button {
                 windowManager.zoomIn()
@@ -91,6 +100,8 @@ struct SimpViewCommands: Commands {
             }
             .keyboardShortcut("-")
             .disabled(windowManager.activeImageURL == nil)
+
+            Divider()
         }
     }
 }

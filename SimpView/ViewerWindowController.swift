@@ -8,7 +8,7 @@ final class ViewerWindowController: NSWindowController {
 
     var didOpenImage: (() -> Void)?
     var didFailToOpenImage: ((URL) -> Void)?
-    var zoomToFitChanged: (() -> Void)?
+    var zoomModeChanged: (() -> Void)?
 
     private var openTask: Task<Void, Never>?
     private var zoomPercentage: Double?
@@ -49,8 +49,8 @@ final class ViewerWindowController: NSWindowController {
             self?.zoomPercentage = percentage
             self?.updateWindowTitle()
         }
-        viewportController.zoomToFitChanged = { [weak self] _ in
-            self?.zoomToFitChanged?()
+        viewportController.zoomModeChanged = { [weak self] in
+            self?.zoomModeChanged?()
         }
     }
 
@@ -95,8 +95,16 @@ final class ViewerWindowController: NSWindowController {
         viewportController.isZoomToFit
     }
 
+    var isZoomToFill: Bool {
+        viewportController.isZoomToFill
+    }
+
     func setZoomToFit(_ enabled: Bool) {
         viewportController.setZoomToFit(enabled)
+    }
+
+    func setZoomToFill(_ enabled: Bool) {
+        viewportController.setZoomToFill(enabled)
     }
 
     func actualSize() {
