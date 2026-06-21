@@ -107,6 +107,11 @@ struct ImageViewport: NSViewRepresentable {
 final class ZoomableImageView: NSView {
     static let zoomStep: CGFloat = 1.25
 
+    private struct ZoomAnchor {
+        let documentPoint: NSPoint
+        let windowPoint: NSPoint
+    }
+
     var zoomChanged: ((Double?) -> Void)?
     var zoomModeChanged: ((ViewportZoomMode) -> Void)?
     weak var controller: ImageViewportController?
@@ -117,6 +122,9 @@ final class ZoomableImageView: NSView {
                 return
             }
             cancelRecenterAnimation()
+            zoomAnchor = nil
+            lastPanProposedOrigin = nil
+            resistedPanOrigin = nil
             imageView.image = image
             imageView.frame = NSRect(origin: .zero, size: image?.size ?? .zero)
             shouldCenterAutomaticZoom = true
@@ -131,6 +139,8 @@ final class ZoomableImageView: NSView {
     private var isApplyingAutomaticZoom = false
     private var shouldCenterAutomaticZoom = true
     private var lastPanProposedOrigin: NSPoint?
+    private var resistedPanOrigin: NSPoint?
+    private var zoomAnchor: ZoomAnchor?
     private var recenterTask: Task<Void, Never>?
 
     override init(frame frameRect: NSRect) {
@@ -157,8 +167,10 @@ final class ZoomableImageView: NSView {
             cancelRecenterAnimation(restoreConstraints: false)
             setManualZoomMode()
             clipView.areConstraintsEnabled = false
+            zoomAnchor = nil
         }
-        scrollView.userMagnified = { [weak self] magnification, point in
+        scrollView.userMagnified = {
+            [weak self] magnification, documentPoint, windowPoint in
             guard let self else {
                 return
             }
@@ -166,13 +178,15 @@ final class ZoomableImageView: NSView {
             guard clampedMagnification != scrollView.magnification else {
                 return
             }
-            scrollView.setMagnification(
+            setMagnification(
                 clampedMagnification,
-                centeredAt: point
+                anchoredAt: documentPoint,
+                windowPoint: windowPoint
             )
             reportZoom()
         }
         scrollView.userMagnificationEnded = { [weak self, weak scrollView] in
+            self?.zoomAnchor = nil
             self?.animateRecentering(scrollView: scrollView)
         }
         scrollView.userScrollZoomBegan = { [weak self] in
@@ -182,8 +196,10 @@ final class ZoomableImageView: NSView {
             cancelRecenterAnimation(restoreConstraints: false)
             setManualZoomMode()
             clipView.areConstraintsEnabled = false
+            zoomAnchor = nil
         }
-        scrollView.userScrollZoomed = { [weak self] factor, point in
+        scrollView.userScrollZoomed = {
+            [weak self] factor, documentPoint, windowPoint in
             guard let self else {
                 return
             }
@@ -193,13 +209,15 @@ final class ZoomableImageView: NSView {
             guard clampedMagnification != scrollView.magnification else {
                 return
             }
-            scrollView.setMagnification(
+            setMagnification(
                 clampedMagnification,
-                centeredAt: point
+                anchoredAt: documentPoint,
+                windowPoint: windowPoint
             )
             reportZoom()
         }
         scrollView.userScrollZoomEnded = { [weak self, weak scrollView] in
+            self?.zoomAnchor = nil
             self?.animateRecentering(scrollView: scrollView)
         }
         scrollView.userPanBegan = { [weak self] in
@@ -209,11 +227,13 @@ final class ZoomableImageView: NSView {
             cancelRecenterAnimation(restoreConstraints: false)
             clipView.areConstraintsEnabled = false
             lastPanProposedOrigin = clipView.bounds.origin
+            resistedPanOrigin = clipView.bounds.origin
         }
         scrollView.userPanned = { [weak self] proposedOrigin in
             guard
                 let self,
-                let lastPanProposedOrigin
+                let lastPanProposedOrigin,
+                let resistedPanOrigin
             else {
                 return
             }
@@ -222,12 +242,17 @@ final class ZoomableImageView: NSView {
                 y: proposedOrigin.y - lastPanProposedOrigin.y
             )
             self.lastPanProposedOrigin = proposedOrigin
-            let bounds = clipView.resistedBounds(by: delta)
+            let bounds = clipView.resistedBounds(
+                from: resistedPanOrigin,
+                by: delta
+            )
+            self.resistedPanOrigin = bounds.origin
             clipView.setBoundsOrigin(bounds.origin)
             scrollView.reflectScrolledClipView(clipView)
         }
         scrollView.userPanEnded = { [weak self, weak scrollView] in
             self?.lastPanProposedOrigin = nil
+            self?.resistedPanOrigin = nil
             self?.animateRecentering(scrollView: scrollView)
         }
         scrollView.userAutomaticZoomRequested = { [weak self] mode in
@@ -322,6 +347,52 @@ final class ZoomableImageView: NSView {
             centeredAt: viewportCenter
         )
         reportZoom()
+    }
+
+    private func setMagnification(
+        _ magnification: CGFloat,
+        anchoredAt documentPoint: NSPoint,
+        windowPoint: NSPoint
+    ) {
+        guard documentPoint.isFinite, windowPoint.isFinite else {
+            return
+        }
+
+        if zoomAnchor?.windowPoint != windowPoint {
+            zoomAnchor = ZoomAnchor(
+                documentPoint: documentPoint,
+                windowPoint: windowPoint
+            )
+        }
+
+        guard let zoomAnchor else {
+            return
+        }
+
+        scrollView.setMagnification(
+            magnification,
+            centeredAt: zoomAnchor.documentPoint
+        )
+
+        let pointUnderAnchor = imageView.convert(
+            zoomAnchor.windowPoint,
+            from: nil
+        )
+        let correction = NSPoint(
+            x: zoomAnchor.documentPoint.x - pointUnderAnchor.x,
+            y: zoomAnchor.documentPoint.y - pointUnderAnchor.y
+        )
+        guard correction.isFinite else {
+            return
+        }
+
+        clipView.setBoundsOrigin(
+            NSPoint(
+                x: clipView.bounds.origin.x + correction.x,
+                y: clipView.bounds.origin.y + correction.y
+            )
+        )
+        scrollView.reflectScrolledClipView(clipView)
     }
 
     private func viewportCenterInDocument() -> NSPoint {
@@ -483,10 +554,10 @@ private final class MagnifyingScrollView: NSScrollView {
     }
 
     var userMagnificationBegan: (() -> Void)?
-    var userMagnified: ((CGFloat, NSPoint) -> Void)?
+    var userMagnified: ((CGFloat, NSPoint, NSPoint) -> Void)?
     var userMagnificationEnded: (() -> Void)?
     var userScrollZoomBegan: (() -> Void)?
-    var userScrollZoomed: ((CGFloat, NSPoint) -> Void)?
+    var userScrollZoomed: ((CGFloat, NSPoint, NSPoint) -> Void)?
     var userScrollZoomEnded: (() -> Void)?
     var userPanBegan: (() -> Void)?
     var userPanned: ((NSPoint) -> Void)?
@@ -496,6 +567,7 @@ private final class MagnifyingScrollView: NSScrollView {
     private var isMagnifying = false
     private var magnificationAtGestureStart: CGFloat?
     private var magnificationAnchor: NSPoint?
+    private var magnificationAnchorInWindow: NSPoint?
     private var magnificationGestureRecognizer:
         NSMagnificationGestureRecognizer?
     fileprivate var isScrollSequenceActive = false
@@ -601,6 +673,10 @@ private final class MagnifyingScrollView: NSScrollView {
                 locationInClipView,
                 from: contentView
             )
+            magnificationAnchorInWindow = contentView.convert(
+                locationInClipView,
+                to: nil
+            )
             userMagnificationBegan?()
             applyRecognizedMagnification(recognizer.magnification)
 
@@ -618,6 +694,7 @@ private final class MagnifyingScrollView: NSScrollView {
             isMagnifying = false
             magnificationAtGestureStart = nil
             magnificationAnchor = nil
+            magnificationAnchorInWindow = nil
             userMagnificationEnded?()
 
         default:
@@ -628,14 +705,16 @@ private final class MagnifyingScrollView: NSScrollView {
     private func applyRecognizedMagnification(_ gestureMagnification: CGFloat) {
         guard
             let magnificationAtGestureStart,
-            let magnificationAnchor
+            let magnificationAnchor,
+            let magnificationAnchorInWindow
         else {
             return
         }
 
         userMagnified?(
             magnificationAtGestureStart * (1 + gestureMagnification),
-            magnificationAnchor
+            magnificationAnchor,
+            magnificationAnchorInWindow
         )
     }
 
@@ -675,7 +754,7 @@ private final class MagnifyingScrollView: NSScrollView {
         if event.phase.contains(.ended)
             || event.phase.contains(.cancelled)
         {
-            scheduleScrollZoomEnd()
+            finishScrollZoom()
             return
         }
 
@@ -699,7 +778,7 @@ private final class MagnifyingScrollView: NSScrollView {
         let stepAmount = event.hasPreciseScrollingDeltas
             ? abs(verticalDelta) / 60
             : 1
-        let stepFactor = 1 + (ZoomableImageView.zoomStep - 1) * stepAmount
+        let stepFactor = pow(ZoomableImageView.zoomStep, stepAmount)
         let factor = verticalDelta > 0 ? stepFactor : 1 / stepFactor
 
         let locationInClipView = contentView.convert(
@@ -710,7 +789,11 @@ private final class MagnifyingScrollView: NSScrollView {
             locationInClipView,
             from: contentView
         )
-        userScrollZoomed?(factor, locationInDocument)
+        userScrollZoomed?(
+            factor,
+            locationInDocument,
+            event.locationInWindow
+        )
 
         if event.phase.isEmpty && event.momentumPhase.isEmpty {
             scheduleScrollZoomEnd()
@@ -878,8 +961,14 @@ private final class CenteringClipView: NSClipView {
         return result
     }
 
-    func resistedBounds(by delta: NSPoint) -> NSRect {
-        let currentBounds = bounds
+    func resistedBounds(
+        from currentOrigin: NSPoint,
+        by delta: NSPoint
+    ) -> NSRect {
+        let currentBounds = NSRect(
+            origin: currentOrigin,
+            size: bounds.size
+        )
         let proposedBounds = NSRect(
             x: currentBounds.origin.x + delta.x,
             y: currentBounds.origin.y + delta.y,
