@@ -86,6 +86,7 @@ struct ImageViewport: NSViewRepresentable {
 @MainActor
 final class ZoomableImageView: NSView {
     static let zoomStep: CGFloat = 1.25
+    static let scrollZoomSpeed: CGFloat = 2
 
     var zoomChanged: ((Double?) -> Void)?
     var zoomToFitChanged: ((Bool) -> Void)?
@@ -121,9 +122,11 @@ final class ZoomableImageView: NSView {
         scrollView.maxMagnification = 64
         scrollView.hasHorizontalScroller = false
         scrollView.hasVerticalScroller = false
+        scrollView.usesPredominantAxisScrolling = false
         scrollView.drawsBackground = false
         scrollView.contentView = clipView
         scrollView.documentView = imageView
+        scrollView.installMagnificationGestureRecognizer()
 
         scrollView.userMagnificationBegan = { [weak self] in
             guard let self else {
@@ -137,8 +140,12 @@ final class ZoomableImageView: NSView {
             guard let self else {
                 return
             }
+            let clampedMagnification = clampedMagnification(magnification)
+            guard clampedMagnification != scrollView.magnification else {
+                return
+            }
             scrollView.setMagnification(
-                clampedMagnification(magnification),
+                clampedMagnification,
                 centeredAt: point
             )
             reportZoom()
@@ -158,8 +165,14 @@ final class ZoomableImageView: NSView {
             guard let self else {
                 return
             }
+            let clampedMagnification = clampedMagnification(
+                scrollView.magnification * factor
+            )
+            guard clampedMagnification != scrollView.magnification else {
+                return
+            }
             scrollView.setMagnification(
-                clampedMagnification(scrollView.magnification * factor),
+                clampedMagnification,
                 centeredAt: point
             )
             reportZoom()
@@ -213,11 +226,11 @@ final class ZoomableImageView: NSView {
 
     @objc private func liveScrollWillStart(_ notification: Notification) {
         cancelRecenterAnimation()
-        scrollView.isScrollSequenceActive = true
+        scrollView.beginNativeScrollSequence()
     }
 
     @objc private func liveScrollDidEnd(_ notification: Notification) {
-        scrollView.isScrollSequenceActive = false
+        scrollView.endNativeScrollSequence()
     }
 
     override func layout() {
@@ -404,6 +417,11 @@ final class ZoomableImageView: NSView {
 }
 
 private final class MagnifyingScrollView: NSScrollView {
+    private enum ScrollMode {
+        case native
+        case zoom
+    }
+
     var userMagnificationBegan: (() -> Void)?
     var userMagnified: ((CGFloat, NSPoint) -> Void)?
     var userMagnificationEnded: (() -> Void)?
@@ -415,11 +433,37 @@ private final class MagnifyingScrollView: NSScrollView {
     var userPanEnded: (() -> Void)?
 
     private var isMagnifying = false
+    private var magnificationAtGestureStart: CGFloat?
+    private var magnificationAnchor: NSPoint?
+    private var magnificationGestureRecognizer:
+        NSMagnificationGestureRecognizer?
     fileprivate var isScrollSequenceActive = false
     private var dragStartLocation: NSPoint?
     private var dragStartOrigin: NSPoint?
     private var isScrollZooming = false
     private var scrollZoomEndTask: Task<Void, Never>?
+    private var isSuppressingScrollGesture = false
+    private var scrollMode: ScrollMode?
+    private var isNativeMomentumActive = false
+
+    fileprivate func beginNativeScrollSequence() {
+        isScrollSequenceActive = true
+    }
+
+    fileprivate func endNativeScrollSequence() {
+        guard !isNativeMomentumActive else {
+            return
+        }
+        finishNativeScrollSequence()
+    }
+
+    private func finishNativeScrollSequence() {
+        isScrollSequenceActive = false
+        isSuppressingScrollGesture = false
+        if scrollMode == .native {
+            scrollMode = nil
+        }
+    }
 
     override func resetCursorRects() {
         super.resetCursorRects()
@@ -476,41 +520,136 @@ private final class MagnifyingScrollView: NSScrollView {
     }
 
     override func magnify(with event: NSEvent) {
-        guard !isScrollSequenceActive else {
-            return
-        }
+    }
 
-        if !isMagnifying {
+    fileprivate func installMagnificationGestureRecognizer() {
+        let recognizer = NSMagnificationGestureRecognizer(
+            target: self,
+            action: #selector(handleMagnificationGesture(_:))
+        )
+        addGestureRecognizer(recognizer)
+        magnificationGestureRecognizer = recognizer
+    }
+
+    @objc private func handleMagnificationGesture(
+        _ recognizer: NSMagnificationGestureRecognizer
+    ) {
+        switch recognizer.state {
+        case .began:
+            guard !isScrollSequenceActive, let documentView else {
+                return
+            }
+
             isMagnifying = true
+            magnificationAtGestureStart = magnification
+
+            let locationInClipView = recognizer.location(in: contentView)
+            magnificationAnchor = documentView.convert(
+                locationInClipView,
+                from: contentView
+            )
             userMagnificationBegan?()
-        }
+            applyRecognizedMagnification(recognizer.magnification)
 
-        guard let documentView else {
-            return
-        }
+        case .changed:
+            guard isMagnifying else {
+                return
+            }
+            applyRecognizedMagnification(recognizer.magnification)
 
-        let locationInClipView = contentView.convert(
-            event.locationInWindow,
-            from: nil
-        )
-        let locationInDocument = documentView.convert(
-            locationInClipView,
-            from: contentView
-        )
-        userMagnified?(
-            magnification + event.magnification,
-            locationInDocument
-        )
-
-        if event.phase == .ended || event.phase == .cancelled {
+        case .ended, .cancelled, .failed:
+            guard isMagnifying else {
+                return
+            }
+            applyRecognizedMagnification(recognizer.magnification)
             isMagnifying = false
+            magnificationAtGestureStart = nil
+            magnificationAnchor = nil
             userMagnificationEnded?()
+
+        default:
+            break
         }
     }
 
+    private func applyRecognizedMagnification(_ gestureMagnification: CGFloat) {
+        guard
+            let magnificationAtGestureStart,
+            let magnificationAnchor
+        else {
+            return
+        }
+
+        userMagnified?(
+            magnificationAtGestureStart * (1 + gestureMagnification),
+            magnificationAnchor
+        )
+    }
+
     override func scrollWheel(with event: NSEvent) {
-        if event.modifierFlags.contains(.command) {
+        let isCommandScroll = event.modifierFlags.contains(.command)
+        let isMomentum = !event.momentumPhase.isEmpty
+
+        if !isMomentum {
+            scrollMode = isCommandScroll ? .native : .zoom
+        }
+
+        if event.momentumPhase.contains(.began)
+            || event.momentumPhase.contains(.changed)
+        {
+            isNativeMomentumActive = scrollMode == .native
+        }
+
+        let shouldScrollNatively =
+            isMomentum
+                ? scrollMode == .native
+                : isCommandScroll
+
+        if isSuppressingScrollGesture {
+            if event.phase.contains(.ended)
+                || event.phase.contains(.cancelled)
+            {
+                isSuppressingScrollGesture = false
+            }
+            return
+        }
+
+        if shouldScrollNatively {
             super.scrollWheel(with: event)
+            if event.momentumPhase.contains(.ended) {
+                isNativeMomentumActive = false
+                finishNativeScrollSequence()
+            }
+            return
+        }
+
+        if isScrollSequenceActive {
+            let beginsNewGesture =
+                event.phase.contains(.began)
+                && event.momentumPhase.isEmpty
+
+            if beginsNewGesture {
+                isSuppressingScrollGesture = true
+                return
+            }
+
+            super.scrollWheel(with: event)
+            if event.momentumPhase.contains(.ended) {
+                isNativeMomentumActive = false
+                finishNativeScrollSequence()
+            }
+            return
+        }
+
+        if event.momentumPhase.contains(.ended) {
+            finishScrollZoom()
+            return
+        }
+
+        if event.phase.contains(.ended)
+            || event.phase.contains(.cancelled)
+        {
+            scheduleScrollZoomEnd()
             return
         }
 
@@ -524,6 +663,8 @@ private final class MagnifyingScrollView: NSScrollView {
             return
         }
 
+        scrollZoomEndTask?.cancel()
+
         if !isScrollZooming {
             isScrollZooming = true
             userScrollZoomBegan?()
@@ -532,8 +673,8 @@ private final class MagnifyingScrollView: NSScrollView {
         let normalizedDelta = event.hasPreciseScrollingDeltas
             ? verticalDelta
             : verticalDelta * 120
-        let speedAdjustment = 2.0
-        let stepAmount = abs(normalizedDelta) / 120 * speedAdjustment
+        let stepAmount =
+            abs(normalizedDelta) / 120 * ZoomableImageView.scrollZoomSpeed
         let stepFactor = 1 + (ZoomableImageView.zoomStep - 1) * stepAmount
         let factor = normalizedDelta > 0 ? stepFactor : 1 / stepFactor
 
@@ -547,17 +688,37 @@ private final class MagnifyingScrollView: NSScrollView {
         )
         userScrollZoomed?(factor, locationInDocument)
 
+        if event.phase.isEmpty && event.momentumPhase.isEmpty {
+            scheduleScrollZoomEnd()
+        }
+    }
+
+    private func scheduleScrollZoomEnd() {
+        guard isScrollZooming else {
+            return
+        }
+
         scrollZoomEndTask?.cancel()
         scrollZoomEndTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(80))
             guard !Task.isCancelled, let self else {
                 return
             }
-            isScrollZooming = false
-            userScrollZoomEnded?()
+            finishScrollZoom()
         }
     }
 
+    private func finishScrollZoom() {
+        scrollZoomEndTask?.cancel()
+        scrollZoomEndTask = nil
+
+        guard isScrollZooming else {
+            return
+        }
+
+        isScrollZooming = false
+        userScrollZoomEnded?()
+    }
 }
 
 private final class CenteringClipView: NSClipView {
@@ -567,7 +728,11 @@ private final class CenteringClipView: NSClipView {
 
     override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
         guard isCenteringEnabled else {
-            return proposedBounds
+            return proposedBounds.isFinite
+                ? proposedBounds
+                : finiteBounds(
+                    for: super.constrainBoundsRect(proposedBounds)
+                )
         }
 
         return centeredBounds(for: proposedBounds)
@@ -577,7 +742,7 @@ private final class CenteringClipView: NSClipView {
         var bounds = super.constrainBoundsRect(proposedBounds)
 
         guard let documentView else {
-            return bounds
+            return finiteBounds(for: bounds)
         }
 
         if documentView.frame.width < bounds.width {
@@ -587,7 +752,26 @@ private final class CenteringClipView: NSClipView {
             bounds.origin.y = (documentView.frame.height - bounds.height) / 2
         }
 
-        return bounds
+        return finiteBounds(for: bounds)
+    }
+
+    private func finiteBounds(for proposedBounds: NSRect) -> NSRect {
+        var result = proposedBounds
+
+        if !result.origin.x.isFinite {
+            result.origin.x = bounds.origin.x
+        }
+        if !result.origin.y.isFinite {
+            result.origin.y = bounds.origin.y
+        }
+        if !result.size.width.isFinite || result.size.width < 0 {
+            result.size.width = bounds.width
+        }
+        if !result.size.height.isFinite || result.size.height < 0 {
+            result.size.height = bounds.height
+        }
+
+        return result
     }
 
     func resistedBounds(for proposedBounds: NSRect) -> NSRect {
@@ -617,5 +801,13 @@ private final class CenteringClipView: NSClipView {
 private extension NSPoint {
     var isFinite: Bool {
         x.isFinite && y.isFinite
+    }
+}
+
+private extension NSRect {
+    var isFinite: Bool {
+        origin.isFinite
+            && size.width.isFinite
+            && size.height.isFinite
     }
 }
