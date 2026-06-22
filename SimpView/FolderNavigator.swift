@@ -144,18 +144,6 @@ final class FolderNavigator {
         return Position(index: index + 1, count: entries.count)
     }
 
-    func canNavigate(from url: URL?, offset: Int) -> Bool {
-        guard
-            let position = position(of: url),
-            offset != 0
-        else {
-            return false
-        }
-
-        let targetIndex = position.index - 1 + offset
-        return entries.indices.contains(targetIndex)
-    }
-
     private func startBackgroundRefresh(for directoryURL: URL) {
         let refresh = startRefresh(for: directoryURL)
         Task { [weak self] in

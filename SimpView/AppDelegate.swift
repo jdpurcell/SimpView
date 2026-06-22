@@ -1,13 +1,23 @@
 import AppKit
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var isSystemTermination = false
+
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSWindow.allowsAutomaticWindowTabbing = false
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(workspaceWillPowerOff(_:)),
+            name: NSWorkspace.willPowerOffNotification,
+            object: nil
+        )
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let restoredSession = WindowManager.shared.restoreSavedSession()
         DispatchQueue.main.async {
-            if WindowManager.shared.hasNoWindows {
+            if !restoredSession, WindowManager.shared.hasNoWindows {
                 WindowManager.shared.newWindow()
             }
         }
@@ -20,6 +30,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillResignActive(_ notification: Notification) {
         WindowManager.shared.stopKeyboardNavigation()
+    }
+
+    func applicationShouldTerminate(
+        _ sender: NSApplication
+    ) -> NSApplication.TerminateReply {
+        if isSystemTermination {
+            try? WindowManager.shared.saveSession()
+            return .terminateNow
+        }
+
+        guard WindowManager.shared.hasImagesForSession else {
+            return clearSessionForTermination()
+        }
+
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = "Remember Session?"
+        alert.informativeText =
+            "Would you like to remember your opened images and re-open them at next launch?"
+        alert.addButton(withTitle: "Remember")
+        alert.addButton(withTitle: "End Session")
+        alert.addButton(withTitle: "Cancel")
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return saveSessionForTermination()
+        case .alertSecondButtonReturn:
+            return clearSessionForTermination()
+        default:
+            return .terminateCancel
+        }
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -36,5 +77,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             WindowManager.shared.newWindow()
         }
         return true
+    }
+
+    @objc
+    private func workspaceWillPowerOff(_ notification: Notification) {
+        isSystemTermination = true
+        try? WindowManager.shared.saveSession()
+    }
+
+    private func saveSessionForTermination()
+        -> NSApplication.TerminateReply
+    {
+        do {
+            try WindowManager.shared.saveSession()
+            return .terminateNow
+        } catch {
+            presentSessionError(
+                message: "The session couldn’t be remembered.",
+                error: error
+            )
+            return .terminateCancel
+        }
+    }
+
+    private func clearSessionForTermination()
+        -> NSApplication.TerminateReply
+    {
+        do {
+            try WindowManager.shared.clearSavedSession()
+            return .terminateNow
+        } catch {
+            presentSessionError(
+                message: "The saved session couldn’t be cleared.",
+                error: error
+            )
+            return .terminateCancel
+        }
+    }
+
+    private func presentSessionError(message: String, error: Error) {
+        let alert = NSAlert(error: error)
+        alert.alertStyle = .warning
+        alert.messageText = message
+        alert.runModal()
     }
 }

@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-enum ViewportZoomMode {
+enum ViewportZoomMode: String, Codable {
     case manual
     case fit
     case fill
@@ -23,6 +23,7 @@ final class ImageViewportController {
     var zoomModeChanged: (() -> Void)?
 
     private weak var viewport: ZoomableImageView?
+    private var pendingSessionState: ViewportSessionState?
 
     func attach(_ viewport: ZoomableImageView) {
         self.viewport = viewport
@@ -37,7 +38,12 @@ final class ImageViewportController {
             zoomMode = mode
             zoomModeChanged?()
         }
-        viewport.setZoomMode(zoomMode)
+        if let pendingSessionState {
+            viewport.restoreSessionState(pendingSessionState)
+            self.pendingSessionState = nil
+        } else {
+            viewport.setZoomMode(zoomMode)
+        }
     }
 
     func detach(_ viewport: ZoomableImageView) {
@@ -47,7 +53,25 @@ final class ImageViewportController {
     }
 
     func prepareForNewImage() {
+        pendingSessionState = nil
         setZoomMode(.fit)
+    }
+
+    func captureSessionState() -> ViewportSessionState {
+        viewport?.captureSessionState()
+            ?? pendingSessionState
+            ?? ViewportSessionState(
+                zoomMode: zoomMode,
+                magnification: 1,
+                centerX: 0.5,
+                centerY: 0.5
+            )
+    }
+
+    func restoreSessionState(_ state: ViewportSessionState) {
+        zoomMode = state.zoomMode
+        pendingSessionState = state
+        zoomModeChanged?()
     }
 
     func setZoomToFit(_ enabled: Bool) {
@@ -83,16 +107,16 @@ struct ImageViewport: NSViewRepresentable {
 
     func makeNSView(context: Context) -> ZoomableImageView {
         let viewport = ZoomableImageView()
-        controller.attach(viewport)
         viewport.image = image
+        controller.attach(viewport)
         return viewport
     }
 
     func updateNSView(_ viewport: ZoomableImageView, context: Context) {
-        controller.attach(viewport)
         if viewport.image !== image {
             viewport.image = image
         }
+        controller.attach(viewport)
     }
 
     static func dismantleNSView(
@@ -143,6 +167,7 @@ final class ZoomableImageView: NSView {
     private var lastPanProposedOrigin: NSPoint?
     private var resistedPanOrigin: NSPoint?
     private var zoomAnchor: ZoomAnchor?
+    private var pendingSessionState: ViewportSessionState?
     private var recenterTask: Task<Void, Never>?
 
     override init(frame frameRect: NSRect) {
@@ -280,6 +305,14 @@ final class ZoomableImageView: NSView {
 
         scrollView.frame = bounds
 
+        if
+            let pendingSessionState,
+            applySessionState(pendingSessionState)
+        {
+            self.pendingSessionState = nil
+            return
+        }
+
         if zoomMode != .manual {
             if applyAutomaticZoom(centeredAt: previousViewportCenter) {
                 shouldCenterAutomaticZoom = false
@@ -330,12 +363,88 @@ final class ZoomableImageView: NSView {
         setMagnification(scrollView.magnification * factor)
     }
 
+    func captureSessionState() -> ViewportSessionState {
+        guard
+            let image,
+            image.size.width > 0,
+            image.size.height > 0
+        else {
+            return pendingSessionState
+                ?? ViewportSessionState(
+                    zoomMode: zoomMode,
+                    magnification: Double(scrollView.magnification),
+                    centerX: 0.5,
+                    centerY: 0.5
+                )
+        }
+
+        let center = viewportCenterInDocument()
+        return ViewportSessionState(
+            zoomMode: zoomMode,
+            magnification: Double(scrollView.magnification),
+            centerX: Double(center.x / image.size.width),
+            centerY: Double(center.y / image.size.height)
+        )
+    }
+
+    func restoreSessionState(_ state: ViewportSessionState) {
+        cancelRecenterAnimation()
+        zoomMode = state.zoomMode
+        shouldCenterAutomaticZoom = false
+        pendingSessionState = state
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+    }
+
     private func setManualZoomMode() {
         guard zoomMode != .manual else {
             return
         }
         zoomMode = .manual
         zoomModeChanged?(.manual)
+    }
+
+    @discardableResult
+    private func applySessionState(
+        _ state: ViewportSessionState
+    ) -> Bool {
+        guard
+            let image,
+            image.size.width > 0,
+            image.size.height > 0,
+            scrollView.contentSize.width > 0,
+            scrollView.contentSize.height > 0
+        else {
+            return false
+        }
+
+        let center = NSPoint(
+            x: CGFloat(state.centerX) * image.size.width,
+            y: CGFloat(state.centerY) * image.size.height
+        )
+        guard center.isFinite else {
+            return false
+        }
+
+        zoomMode = state.zoomMode
+        clipView.areConstraintsEnabled = true
+
+        switch state.zoomMode {
+        case .manual:
+            scrollView.setMagnification(
+                clampedMagnification(CGFloat(state.magnification)),
+                centeredAt: center
+            )
+            centerViewport(at: center)
+        case .fit, .fill:
+            shouldCenterAutomaticZoom = false
+            guard applyAutomaticZoom(centeredAt: center) else {
+                return false
+            }
+        }
+
+        reportZoom()
+        return true
     }
 
     private func setMagnification(_ magnification: CGFloat) {

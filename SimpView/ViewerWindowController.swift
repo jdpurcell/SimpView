@@ -7,13 +7,13 @@ final class ViewerWindowController: NSWindowController {
     let viewportController = ImageViewportController()
     private let folderNavigator = FolderNavigator()
 
-    var didOpenImage: (() -> Void)?
+    var didOpenImage: ((_ addToRecentDocuments: Bool) -> Void)?
     var didFailToOpenImage: ((URL) -> Void)?
     var willOpenImage: (() -> Void)?
     var zoomModeChanged: (() -> Void)?
-    var navigationStateChanged: (() -> Void)?
 
     private var openTask: Task<Void, Never>?
+    private var pendingRestoredWindowState: SessionWindowState?
     private var zoomPercentage: Double?
 
     init() {
@@ -45,6 +45,7 @@ final class ViewerWindowController: NSWindowController {
             .resizable,
         ]
         window.isReleasedWhenClosed = false
+        window.isRestorable = false
 
         self.window = window
 
@@ -57,7 +58,6 @@ final class ViewerWindowController: NSWindowController {
         }
         folderNavigator.listingChanged = { [weak self] in
             self?.updateWindowTitle()
-            self?.navigationStateChanged?()
         }
     }
 
@@ -67,11 +67,74 @@ final class ViewerWindowController: NSWindowController {
     }
 
     func open(_ url: URL) {
+        pendingRestoredWindowState = nil
         willOpenImage?()
         folderNavigator.prepareForExternalOpen(url)
         open {
             url
         }
+    }
+
+    func restoreSession(_ state: SessionWindowState) {
+        pendingRestoredWindowState = state
+        guard let imagePath = state.imagePath else {
+            return
+        }
+
+        let url = URL(fileURLWithPath: imagePath)
+        folderNavigator.prepareForExternalOpen(url)
+        openTask?.cancel()
+        openTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+
+            let didOpen = await performOpen(
+                resolvingURL: { url },
+                reportFailure: false,
+                addToRecentDocuments: false
+            )
+            guard didOpen else {
+                if !Task.isCancelled {
+                    pendingRestoredWindowState = nil
+                }
+                return
+            }
+            if let viewport = state.viewport {
+                viewportController.restoreSessionState(viewport)
+            }
+            pendingRestoredWindowState = nil
+        }
+    }
+
+    func captureSessionState() -> SessionWindowState? {
+        guard let window else {
+            return nil
+        }
+
+        let frame = window.frame
+        let restoredState = pendingRestoredWindowState
+        return SessionWindowState(
+            frame: SessionRect(
+                x: Double(frame.origin.x),
+                y: Double(frame.origin.y),
+                width: Double(frame.size.width),
+                height: Double(frame.size.height)
+            ),
+            imagePath:
+                imageDocument.fileURL?.path
+                ?? restoredState?.imagePath,
+            viewport: imageDocument.image == nil
+                ? restoredState?.viewport
+                : viewportController.captureSessionState(),
+            isKeyWindow: window.isKeyWindow,
+            isMiniaturized: window.isMiniaturized
+        )
+    }
+
+    var hasImageForSession: Bool {
+        imageDocument.fileURL != nil
+            || pendingRestoredWindowState?.imagePath != nil
     }
 
     func previousImage() {
@@ -97,14 +160,6 @@ final class ViewerWindowController: NSWindowController {
 
     func waitForCurrentOpen() async {
         await openTask?.value
-    }
-
-    var canNavigateToPreviousImage: Bool {
-        folderNavigator.canNavigate(from: imageDocument.fileURL, offset: -1)
-    }
-
-    var canNavigateToNextImage: Bool {
-        folderNavigator.canNavigate(from: imageDocument.fileURL, offset: 1)
     }
 
     private func navigate(by offset: Int) {
@@ -135,7 +190,9 @@ final class ViewerWindowController: NSWindowController {
 
     @discardableResult
     private func performOpen(
-        resolvingURL: () async -> URL?
+        resolvingURL: () async -> URL?,
+        reportFailure: Bool = true,
+        addToRecentDocuments: Bool = true
     ) async -> Bool {
         let result = await imageDocument.open(
             resolvingURL: resolvingURL
@@ -151,11 +208,12 @@ final class ViewerWindowController: NSWindowController {
             viewportController.prepareForNewImage()
             updateWindowTitle()
             window?.representedURL = url
-            didOpenImage?()
-            navigationStateChanged?()
+            didOpenImage?(addToRecentDocuments)
             return true
         case .failed(let url):
-            didFailToOpenImage?(url)
+            if reportFailure {
+                didFailToOpenImage?(url)
+            }
             return false
         case .unchanged, .superseded:
             return false
@@ -164,6 +222,7 @@ final class ViewerWindowController: NSWindowController {
 
     func closeImage() {
         openTask?.cancel()
+        pendingRestoredWindowState = nil
         imageDocument.close()
     }
 

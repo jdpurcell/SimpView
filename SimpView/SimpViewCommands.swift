@@ -99,7 +99,7 @@ struct SimpViewCommands: Commands {
                 Label("Previous Image", systemImage: "chevron.left")
             }
             .keyboardShortcut(.leftArrow, modifiers: [])
-            .disabled(!windowManager.canNavigateToPreviousImage)
+            .disabled(windowManager.activeImageURL == nil)
 
             Button {
                 windowManager.nextImage()
@@ -107,7 +107,7 @@ struct SimpViewCommands: Commands {
                 Label("Next Image", systemImage: "chevron.right")
             }
             .keyboardShortcut(.rightArrow, modifiers: [])
-            .disabled(!windowManager.canNavigateToNextImage)
+            .disabled(windowManager.activeImageURL == nil)
         }
 
         CommandGroup(before: .toolbar) {

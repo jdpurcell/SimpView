@@ -10,8 +10,6 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     @Published private(set) var hasOpenWindows = false
     @Published private(set) var activeZoomToFit = false
     @Published private(set) var activeZoomToFill = false
-    @Published private(set) var canNavigateToPreviousImage = false
-    @Published private(set) var canNavigateToNextImage = false
     @Published private(set) var recentDocumentURLs: [URL] = []
 
     private var windowControllers: [ViewerWindowController] = []
@@ -26,6 +24,10 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         windowControllers.isEmpty
     }
 
+    var hasImagesForSession: Bool {
+        windowControllers.contains { $0.hasImageForSession }
+    }
+
     private override init() {
         super.init()
         refreshRecentDocuments()
@@ -37,6 +39,75 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         keyboardNavigationController = nil
         hasKeyboardNavigationRepeated = false
         keyboardNavigationIdentifier = UUID()
+    }
+
+    func saveSession() throws {
+        let state = SessionState(
+            formatVersion: SessionState.currentFormatVersion,
+            windows: windowControllers.compactMap {
+                $0.captureSessionState()
+            }
+        )
+        try SessionStateStore.save(state)
+    }
+
+    func clearSavedSession() throws {
+        try SessionStateStore.clear()
+    }
+
+    @discardableResult
+    func restoreSavedSession() -> Bool {
+        guard case .loaded(let state) = SessionStateStore.load() else {
+            return false
+        }
+
+        stopKeyboardNavigation()
+        var restoredControllers: [(
+            controller: ViewerWindowController,
+            state: SessionWindowState
+        )] = []
+
+        for windowState in state.windows {
+            let controller = makeWindowController()
+            guard let window = controller.window else {
+                continue
+            }
+
+            windowControllers.append(controller)
+            window.setFrame(
+                restoredFrame(for: windowState.frame, window: window),
+                display: false
+            )
+            controller.showWindow(nil)
+            controller.restoreSession(windowState)
+
+            if windowState.isMiniaturized {
+                window.miniaturize(nil)
+            } else {
+                window.orderFront(nil)
+            }
+
+            restoredControllers.append((controller, windowState))
+        }
+
+        updateWindowAvailability()
+
+        let keyController =
+            (restoredControllers.first { $0.state.isKeyWindow })?
+                .controller
+            ?? (restoredControllers.last {
+                !$0.state.isMiniaturized
+            })?.controller
+            ?? restoredControllers.last?.controller
+        lastFocusedWindowController = keyController
+
+        if let window = keyController?.window, !window.isMiniaturized {
+            window.makeKeyAndOrderFront(nil)
+        }
+
+        updateActiveImageURL()
+        updateActiveZoomState()
+        return true
     }
 
     func newWindow(opening url: URL? = nil) {
@@ -159,7 +230,6 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         lastFocusedWindowController = controller
         updateActiveImageURL()
         updateActiveZoomState()
-        updateActiveNavigationState()
     }
 
     func windowDidResignKey(_ notification: Notification) {
@@ -191,7 +261,6 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         }
         updateActiveImageURL()
         updateActiveZoomState()
-        updateActiveNavigationState()
     }
 
     private func makeWindow() -> ViewerWindowController {
@@ -211,18 +280,21 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
             .keyboardNavigationHandler = { [weak self] event in
                 self?.handleKeyboardNavigationEvent(event) ?? false
             }
-        controller.didOpenImage = { [weak self, weak controller] in
+        controller.didOpenImage = {
+            [weak self, weak controller] addToRecentDocuments in
             guard let self, let controller else {
                 return
             }
-            if let url = controller.imageDocument.fileURL {
+            if
+                addToRecentDocuments,
+                let url = controller.imageDocument.fileURL
+            {
                 NSDocumentController.shared.noteNewRecentDocumentURL(url)
                 self.refreshRecentDocuments()
             }
             self.lastFocusedWindowController = controller
             self.updateActiveImageURL()
             self.updateActiveZoomState()
-            self.updateActiveNavigationState()
         }
         controller.willOpenImage = { [weak self] in
             self?.stopKeyboardNavigation()
@@ -238,15 +310,6 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
                 return
             }
             self.updateActiveZoomState()
-        }
-        controller.navigationStateChanged = { [weak self, weak controller] in
-            guard
-                let self,
-                controller === self.mostRecentWindowController
-            else {
-                return
-            }
-            self.updateActiveNavigationState()
         }
         return controller
     }
@@ -268,15 +331,54 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         activeZoomToFill = mostRecentWindowController?.isZoomToFill ?? false
     }
 
-    private func updateActiveNavigationState() {
-        canNavigateToPreviousImage =
-            mostRecentWindowController?.canNavigateToPreviousImage ?? false
-        canNavigateToNextImage =
-            mostRecentWindowController?.canNavigateToNextImage ?? false
-    }
-
     private func updateWindowAvailability() {
         hasOpenWindows = !windowControllers.isEmpty
+    }
+
+    private func restoredFrame(
+        for savedFrame: SessionRect,
+        window: NSWindow
+    ) -> NSRect {
+        let frame = NSRect(
+            x: savedFrame.x,
+            y: savedFrame.y,
+            width: savedFrame.width,
+            height: savedFrame.height
+        )
+        guard
+            frame.origin.x.isFinite,
+            frame.origin.y.isFinite,
+            frame.size.width.isFinite,
+            frame.size.height.isFinite,
+            frame.size.width > 0,
+            frame.size.height > 0
+        else {
+            return window.frame
+        }
+
+        let bestScreen = NSScreen.screens.max {
+            intersectionArea(of: frame, with: $0.frame)
+                < intersectionArea(of: frame, with: $1.frame)
+        }
+        let screen =
+            bestScreen.flatMap {
+                intersectionArea(of: frame, with: $0.frame) > 0
+                    ? $0
+                    : nil
+            }
+            ?? NSScreen.main
+        return window.constrainFrameRect(frame, to: screen)
+    }
+
+    private func intersectionArea(
+        of frame: NSRect,
+        with screenFrame: NSRect
+    ) -> CGFloat {
+        let intersection = frame.intersection(screenFrame)
+        guard !intersection.isNull else {
+            return 0
+        }
+        return intersection.width * intersection.height
     }
 
     private func handleKeyboardNavigationEvent(
