@@ -18,6 +18,8 @@ final class ViewerWindowController: NSWindowController {
     private var zoomPercentage: Double?
     private var cancellables: Set<AnyCancellable> = []
     private let presentation = ViewerWindowPresentation()
+    private var isTitleBarHidden = false
+    private var isHoveringWindowButtons = false
 
     init() {
         super.init(window: nil)
@@ -53,6 +55,10 @@ final class ViewerWindowController: NSWindowController {
 
         self.window = window
         presentation.title = window.title
+        window.windowButtonHoverChanged = { [weak self] hovering in
+            self?.isHoveringWindowButtons = hovering
+            self?.updateWindowButtonOpacity()
+        }
 
         viewportController.zoomChanged = { [weak self] percentage in
             self?.zoomPercentage = percentage
@@ -70,6 +76,18 @@ final class ViewerWindowController: NSWindowController {
                 self?.setTitleBarHidden($0)
             }
             .store(in: &cancellables)
+        NotificationCenter.default.publisher(
+            for: NSWindow.didBecomeKeyNotification,
+            object: window
+        )
+        .merge(with: NotificationCenter.default.publisher(
+            for: NSWindow.didResignKeyNotification,
+            object: window
+        ))
+        .sink { [weak self] _ in
+            self?.updateWindowButtonOpacity()
+        }
+        .store(in: &cancellables)
     }
 
     @available(*, unavailable)
@@ -91,6 +109,7 @@ final class ViewerWindowController: NSWindowController {
             return
         }
 
+        isTitleBarHidden = hidden
         let frame = window.frame
         if hidden {
             window.styleMask.insert(.fullSizeContentView)
@@ -109,6 +128,27 @@ final class ViewerWindowController: NSWindowController {
         // Changing the title-bar style changes the content area. Preserve the
         // outer frame and let the viewport respond to its newly available size.
         window.setFrame(frame, display: true)
+        (window as? ViewerWindow)?.updateWindowButtonTrackingArea()
+        updateWindowButtonOpacity()
+    }
+
+    private func updateWindowButtonOpacity() {
+        guard let window else {
+            return
+        }
+
+        let shouldDim = isTitleBarHidden
+            && window.isKeyWindow
+            && !isHoveringWindowButtons
+        let opacity: CGFloat = shouldDim ? 0.5 : 1
+
+        [
+            NSWindow.ButtonType.closeButton,
+            .miniaturizeButton,
+            .zoomButton,
+        ].forEach {
+            window.standardWindowButton($0)?.alphaValue = opacity
+        }
     }
 
     func restoreSession(_ state: SessionWindowState) {
