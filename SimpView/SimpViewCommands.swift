@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct SimpViewCommands: Commands {
@@ -15,14 +16,49 @@ struct SimpViewCommands: Commands {
             }
             .keyboardShortcut("o")
 
+            Menu {
+                ForEach(
+                    windowManager.recentDocumentURLs,
+                    id: \.self
+                ) { url in
+                    Button {
+                        windowManager.openRecentDocument(url)
+                    } label: {
+                        Label {
+                            Text(url.lastPathComponent)
+                        } icon: {
+                            Image(
+                                nsImage: NSWorkspace.shared.icon(
+                                    forFile: url.path
+                                )
+                            )
+                        }
+                    }
+                }
+
+                Divider()
+
+                Button {
+                    windowManager.clearRecentDocuments()
+                } label: {
+                    Label("Clear Menu", systemImage: "trash")
+                }
+                .disabled(windowManager.recentDocumentURLs.isEmpty)
+            } label: {
+                Label(
+                    "Open Recent",
+                    systemImage: "clock.arrow.circlepath"
+                )
+            }
+
+            Divider()
+
             Button {
                 windowManager.newWindow()
             } label: {
                 Label("New Window", systemImage: "macwindow.badge.plus")
             }
             .keyboardShortcut("n")
-
-            Divider()
 
             Button {
                 windowManager.closeActiveWindow()
@@ -43,6 +79,8 @@ struct SimpViewCommands: Commands {
         }
 
         CommandGroup(after: .newItem) {
+            Divider()
+
             Button {
                 windowManager.showInFinder()
             } label: {

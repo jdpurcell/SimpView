@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidBecomeActive(_ notification: Notification) {
         AppPreferences.shared.refresh()
+        WindowManager.shared.refreshRecentDocuments()
     }
 
     func applicationWillResignActive(_ notification: Notification) {

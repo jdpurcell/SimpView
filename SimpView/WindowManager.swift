@@ -12,6 +12,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     @Published private(set) var activeZoomToFill = false
     @Published private(set) var canNavigateToPreviousImage = false
     @Published private(set) var canNavigateToNextImage = false
+    @Published private(set) var recentDocumentURLs: [URL] = []
 
     private var windowControllers: [ViewerWindowController] = []
     private weak var lastFocusedWindowController: ViewerWindowController?
@@ -23,6 +24,11 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
 
     var hasNoWindows: Bool {
         windowControllers.isEmpty
+    }
+
+    private override init() {
+        super.init()
+        refreshRecentDocuments()
     }
 
     func stopKeyboardNavigation() {
@@ -73,6 +79,22 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
 
             controller.open(url)
         }
+    }
+
+    func openRecentDocument(_ url: URL) {
+        stopKeyboardNavigation()
+        let controller = mostRecentWindowController ?? makeWindow()
+        controller.open(url)
+    }
+
+    func clearRecentDocuments() {
+        NSDocumentController.shared.clearRecentDocuments(nil)
+        refreshRecentDocuments()
+    }
+
+    func refreshRecentDocuments() {
+        recentDocumentURLs =
+            NSDocumentController.shared.recentDocumentURLs
     }
 
     func closeActiveWindow() {
@@ -192,6 +214,10 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         controller.didOpenImage = { [weak self, weak controller] in
             guard let self, let controller else {
                 return
+            }
+            if let url = controller.imageDocument.fileURL {
+                NSDocumentController.shared.noteNewRecentDocumentURL(url)
+                self.refreshRecentDocuments()
             }
             self.lastFocusedWindowController = controller
             self.updateActiveImageURL()
