@@ -1,0 +1,51 @@
+name: Build macOS App
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-26
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Compute build suffix
+        id: build_meta
+        shell: bash
+        run: |
+          BUILD_SUFFIX="$(date '+%Y-%m-%d').${GITHUB_SHA::7}"
+          echo "BUILD_SUFFIX=$BUILD_SUFFIX" >> "$GITHUB_ENV"
+
+      - name: Build release app
+        shell: bash
+        run: |
+          xcodebuild \
+            -project SimpView.xcodeproj \
+            -scheme SimpView \
+            -configuration Release \
+            -derivedDataPath build \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Package dmg
+        shell: pwsh
+        env:
+          APPLE_DEVID_APP_CERT_DATA: ${{ secrets.APPLE_DEVID_APP_CERT_DATA }}
+          APPLE_DEVID_APP_CERT_PASS: ${{ secrets.APPLE_DEVID_APP_CERT_PASS }}
+          APPLE_ID_USER: ${{ secrets.APPLE_ID_USER }}
+          APPLE_ID_PASS: ${{ secrets.APPLE_ID_PASS }}
+        run: |
+          & .github/scripts/install_cert.ps1
+          bash ./.github/scripts/package_dmg.sh "$env:BUILD_SUFFIX"
+
+      - name: Upload dmg artifact
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist
+          archive: false
