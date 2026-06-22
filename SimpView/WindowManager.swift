@@ -198,6 +198,16 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         mostRecentWindowController?.nextImage()
     }
 
+    func firstImage() {
+        stopKeyboardNavigation()
+        mostRecentWindowController?.firstImage()
+    }
+
+    func lastImage() {
+        stopKeyboardNavigation()
+        mostRecentWindowController?.lastImage()
+    }
+
     func setZoomToFit(_ enabled: Bool) {
         mostRecentWindowController?.setZoomToFit(enabled)
         updateActiveZoomState()

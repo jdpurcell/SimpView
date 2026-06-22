@@ -181,6 +181,14 @@ final class ViewerWindowController: NSWindowController {
         navigate(by: 1)
     }
 
+    func firstImage() {
+        navigateToEndpoint(first: true)
+    }
+
+    func lastImage() {
+        navigateToEndpoint(first: false)
+    }
+
     func navigateByKeyboard(by offset: Int) async -> Bool {
         guard let currentURL = imageDocument.fileURL else {
             return false
@@ -207,6 +215,19 @@ final class ViewerWindowController: NSWindowController {
             await folderNavigator.adjacentURL(
                 from: currentURL,
                 offset: offset
+            )
+        }
+    }
+
+    private func navigateToEndpoint(first: Bool) {
+        guard let currentURL = imageDocument.fileURL else {
+            return
+        }
+
+        open { [folderNavigator] in
+            await folderNavigator.endpointURL(
+                from: currentURL,
+                first: first
             )
         }
     }

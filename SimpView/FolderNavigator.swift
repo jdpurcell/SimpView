@@ -76,6 +76,31 @@ final class FolderNavigator {
             return nil
         }
 
+        let normalizedURL = await prepareForNavigation(from: currentURL)
+        guard let currentIndex = entryIndex(for: normalizedURL) else {
+            return nil
+        }
+
+        let targetIndex = currentIndex + offset
+        guard entries.indices.contains(targetIndex) else {
+            return nil
+        }
+
+        return entries[targetIndex].url
+    }
+
+    func endpointURL(from currentURL: URL, first: Bool) async -> URL? {
+        let normalizedURL = await prepareForNavigation(from: currentURL)
+        guard let targetURL = first ? entries.first?.url : entries.last?.url,
+            normalized(targetURL) != normalizedURL
+        else {
+            return nil
+        }
+
+        return targetURL
+    }
+
+    private func prepareForNavigation(from currentURL: URL) async -> URL {
         let normalizedURL = normalized(currentURL)
         let currentDirectoryURL = normalizedURL.deletingLastPathComponent()
         let now = Date()
@@ -102,16 +127,7 @@ final class FolderNavigator {
             await refresh(for: currentDirectoryURL)
         }
 
-        guard let currentIndex = entryIndex(for: normalizedURL) else {
-            return nil
-        }
-
-        let targetIndex = currentIndex + offset
-        guard entries.indices.contains(targetIndex) else {
-            return nil
-        }
-
-        return entries[targetIndex].url
+        return normalizedURL
     }
 
     func didOpen(_ url: URL) {

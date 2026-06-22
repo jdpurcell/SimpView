@@ -105,6 +105,24 @@ struct SimpViewCommands: Commands {
             }
             .keyboardShortcut(.rightArrow, modifiers: [])
             .disabled(windowManager.activeImageURL == nil)
+
+            Divider()
+
+            Button {
+                windowManager.firstImage()
+            } label: {
+                Label("First Image", systemImage: "backward.end")
+            }
+            .keyboardShortcut(.home, modifiers: [])
+            .disabled(windowManager.activeImageURL == nil)
+
+            Button {
+                windowManager.lastImage()
+            } label: {
+                Label("Last Image", systemImage: "forward.end")
+            }
+            .keyboardShortcut(.end, modifiers: [])
+            .disabled(windowManager.activeImageURL == nil)
         }
 
         CommandGroup(before: .toolbar) {
