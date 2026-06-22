@@ -77,6 +77,11 @@ struct SettingsView: View {
                     "Quit when the last window is closed",
                     isOn: quitOnLastWindowClosed
                 )
+
+                Toggle(
+                    "Hide window title bar",
+                    isOn: hideTitleBar
+                )
             } header: {
                 Text("Application")
             }
@@ -127,6 +132,13 @@ struct SettingsView: View {
         Binding(
             get: { preferences.quitOnLastWindowClosed },
             set: { preferences.setQuitOnLastWindowClosed($0) }
+        )
+    }
+
+    private var hideTitleBar: Binding<Bool> {
+        Binding(
+            get: { preferences.hideTitleBar },
+            set: { preferences.setHideTitleBar($0) }
         )
     }
 }

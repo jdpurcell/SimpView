@@ -21,6 +21,7 @@ final class AppPreferences: NSObject, ObservableObject {
     @Published private(set) var navigationIntervalMilliseconds: Int
     @Published private(set) var promptToRememberSession: Bool
     @Published private(set) var quitOnLastWindowClosed: Bool
+    @Published private(set) var hideTitleBar: Bool
 
     var zoomStep: CGFloat {
         1 + CGFloat(zoomStepPercent) / 100
@@ -33,6 +34,7 @@ final class AppPreferences: NSObject, ObservableObject {
         static let navigationInterval = "navigationInterval"
         static let promptToRememberSession = "promptToRememberSession"
         static let quitOnLastWindowClosed = "quitOnLastWindowClosed"
+        static let hideTitleBar = "hideTitleBar"
     }
 
     private static let defaultZoomStepPercent = 25
@@ -58,6 +60,11 @@ final class AppPreferences: NSObject, ObservableObject {
         )
         quitOnLastWindowClosed = Self.readBool(
             Key.quitOnLastWindowClosed,
+            defaultValue: false,
+            from: defaults
+        )
+        hideTitleBar = Self.readBool(
+            Key.hideTitleBar,
             defaultValue: false,
             from: defaults
         )
@@ -110,6 +117,15 @@ final class AppPreferences: NSObject, ObservableObject {
         if quitOnLastWindowClosed != newQuitOnLastWindowClosed {
             quitOnLastWindowClosed = newQuitOnLastWindowClosed
         }
+
+        let newHideTitleBar = Self.readBool(
+            Key.hideTitleBar,
+            defaultValue: false,
+            from: defaults
+        )
+        if hideTitleBar != newHideTitleBar {
+            hideTitleBar = newHideTitleBar
+        }
     }
 
     func setZoomStepPercent(_ value: Int) {
@@ -147,6 +163,11 @@ final class AppPreferences: NSObject, ObservableObject {
 
     func setQuitOnLastWindowClosed(_ value: Bool) {
         defaults.set(value, forKey: Key.quitOnLastWindowClosed)
+        refresh()
+    }
+
+    func setHideTitleBar(_ value: Bool) {
+        defaults.set(value, forKey: Key.hideTitleBar)
         refresh()
     }
 

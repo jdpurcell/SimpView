@@ -692,11 +692,14 @@ private final class MagnifyingScrollView: NSScrollView {
 
     override func resetCursorRects() {
         super.resetCursorRects()
-        addCursorRect(bounds, cursor: .openHand)
+        addCursorRect(pannableBounds, cursor: .openHand)
     }
 
     override func mouseDown(with event: NSEvent) {
-        guard event.buttonNumber == 0 else {
+        guard
+            event.buttonNumber == 0,
+            !isInWindowDragRegion(event)
+        else {
             super.mouseDown(with: event)
             return
         }
@@ -742,6 +745,27 @@ private final class MagnifyingScrollView: NSScrollView {
         NSCursor.pop()
         window?.invalidateCursorRects(for: self)
         userPanEnded?()
+    }
+
+    private var pannableBounds: NSRect {
+        guard let window else {
+            return bounds
+        }
+
+        return bounds.intersection(
+            convert(window.contentLayoutRect, from: nil)
+        )
+    }
+
+    private func isInWindowDragRegion(_ event: NSEvent) -> Bool {
+        guard
+            let window,
+            window.styleMask.contains(.fullSizeContentView)
+        else {
+            return false
+        }
+
+        return !window.contentLayoutRect.contains(event.locationInWindow)
     }
 
     override func otherMouseDown(with event: NSEvent) {

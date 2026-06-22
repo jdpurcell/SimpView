@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 @MainActor
@@ -15,12 +16,15 @@ final class ViewerWindowController: NSWindowController {
     private var openTask: Task<Void, Never>?
     private var pendingRestoredWindowState: SessionWindowState?
     private var zoomPercentage: Double?
+    private var cancellables: Set<AnyCancellable> = []
+    private let presentation = ViewerWindowPresentation()
 
     init() {
         super.init(window: nil)
 
         let contentView = ImageViewerView(
             document: imageDocument,
+            presentation: presentation,
             viewportController: viewportController,
             openDroppedFile: { [weak self] url in
                 guard let self else {
@@ -48,10 +52,11 @@ final class ViewerWindowController: NSWindowController {
         window.isRestorable = false
 
         self.window = window
+        presentation.title = window.title
 
         viewportController.zoomChanged = { [weak self] percentage in
             self?.zoomPercentage = percentage
-            self?.updateWindowTitle()
+            self?.updateWindowTitle(revealingBubble: true)
         }
         viewportController.zoomModeChanged = { [weak self] in
             self?.zoomModeChanged?()
@@ -59,6 +64,12 @@ final class ViewerWindowController: NSWindowController {
         folderNavigator.listingChanged = { [weak self] in
             self?.updateWindowTitle()
         }
+        AppPreferences.shared.$hideTitleBar
+            .removeDuplicates()
+            .sink { [weak self] in
+                self?.setTitleBarHidden($0)
+            }
+            .store(in: &cancellables)
     }
 
     @available(*, unavailable)
@@ -73,6 +84,31 @@ final class ViewerWindowController: NSWindowController {
         open {
             url
         }
+    }
+
+    private func setTitleBarHidden(_ hidden: Bool) {
+        guard let window else {
+            return
+        }
+
+        let frame = window.frame
+        if hidden {
+            window.styleMask.insert(.fullSizeContentView)
+            window.titlebarAppearsTransparent = true
+            window.titleVisibility = .hidden
+            window.standardWindowButton(.documentIconButton)?
+                .isHidden = true
+        } else {
+            window.styleMask.remove(.fullSizeContentView)
+            window.titlebarAppearsTransparent = false
+            window.titleVisibility = .visible
+            window.standardWindowButton(.documentIconButton)?
+                .isHidden = false
+        }
+
+        // Changing the title-bar style changes the content area. Preserve the
+        // outer frame and let the viewport respond to its newly available size.
+        window.setFrame(frame, display: true)
     }
 
     func restoreSession(_ state: SessionWindowState) {
@@ -206,7 +242,7 @@ final class ViewerWindowController: NSWindowController {
             folderNavigator.didOpen(url)
             zoomPercentage = nil
             viewportController.prepareForNewImage()
-            updateWindowTitle()
+            updateWindowTitle(revealingBubble: true)
             window?.representedURL = url
             didOpenImage?(addToRecentDocuments)
             return true
@@ -254,9 +290,14 @@ final class ViewerWindowController: NSWindowController {
         viewportController.zoomOut()
     }
 
-    private func updateWindowTitle() {
+    private func updateWindowTitle(
+        revealingBubble: Bool = false
+    ) {
         guard imageDocument.fileURL != nil else {
-            window?.title = "SimpView"
+            setWindowTitle(
+                "SimpView",
+                revealingBubble: revealingBubble
+            )
             return
         }
 
@@ -268,6 +309,51 @@ final class ViewerWindowController: NSWindowController {
             components.append("\(position.index)/\(position.count)")
         }
         components.append(imageDocument.displayName)
-        window?.title = components.joined(separator: " - ")
+        setWindowTitle(
+            components.joined(separator: " - "),
+            revealingBubble: revealingBubble
+        )
+    }
+
+    private func setWindowTitle(
+        _ title: String,
+        revealingBubble: Bool
+    ) {
+        window?.title = title
+        DispatchQueue.main.async { [weak presentation] in
+            presentation?.update(
+                title: title,
+                revealingBubble: revealingBubble
+            )
+        }
+    }
+}
+
+@MainActor
+final class ViewerWindowPresentation: ObservableObject {
+    @Published var title = "SimpView"
+    @Published private(set) var isTitleBubbleVisible = false
+
+    private var titleBubbleHideTask: Task<Void, Never>?
+
+    func update(title: String, revealingBubble: Bool) {
+        if self.title != title {
+            self.title = title
+        }
+
+        guard revealingBubble else {
+            return
+        }
+
+        titleBubbleHideTask?.cancel()
+        isTitleBubbleVisible = true
+        titleBubbleHideTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled, let self else {
+                return
+            }
+            isTitleBubbleVisible = false
+            titleBubbleHideTask = nil
+        }
     }
 }
