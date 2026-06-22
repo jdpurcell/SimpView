@@ -1,12 +1,12 @@
 import Combine
 import Foundation
 
-enum ImageSortField: String, Sendable {
+enum ImageSortField: String, Hashable, Sendable {
     case name
     case modificationDate
 }
 
-enum SortDirection: String, Sendable {
+enum SortDirection: String, Hashable, Sendable {
     case ascending
     case descending
 }
@@ -19,6 +19,8 @@ final class AppPreferences: NSObject, ObservableObject {
     @Published private(set) var imageSortField: ImageSortField
     @Published private(set) var imageSortDirection: SortDirection
     @Published private(set) var navigationIntervalMilliseconds: Int
+    @Published private(set) var promptToRememberSession: Bool
+    @Published private(set) var quitOnLastWindowClosed: Bool
 
     var zoomStep: CGFloat {
         1 + CGFloat(zoomStepPercent) / 100
@@ -29,6 +31,8 @@ final class AppPreferences: NSObject, ObservableObject {
         static let imageSortField = "imageSortField"
         static let imageSortDirection = "imageSortDirection"
         static let navigationInterval = "navigationInterval"
+        static let promptToRememberSession = "promptToRememberSession"
+        static let quitOnLastWindowClosed = "quitOnLastWindowClosed"
     }
 
     private static let defaultZoomStepPercent = 25
@@ -47,6 +51,16 @@ final class AppPreferences: NSObject, ObservableObject {
         imageSortDirection = Self.readImageSortDirection(from: defaults)
         navigationIntervalMilliseconds =
             Self.readNavigationIntervalMilliseconds(from: defaults)
+        promptToRememberSession = Self.readBool(
+            Key.promptToRememberSession,
+            defaultValue: true,
+            from: defaults
+        )
+        quitOnLastWindowClosed = Self.readBool(
+            Key.quitOnLastWindowClosed,
+            defaultValue: false,
+            from: defaults
+        )
         super.init()
 
         NotificationCenter.default.addObserver(
@@ -78,6 +92,24 @@ final class AppPreferences: NSObject, ObservableObject {
         if navigationIntervalMilliseconds != newNavigationInterval {
             navigationIntervalMilliseconds = newNavigationInterval
         }
+
+        let newPromptToRememberSession = Self.readBool(
+            Key.promptToRememberSession,
+            defaultValue: true,
+            from: defaults
+        )
+        if promptToRememberSession != newPromptToRememberSession {
+            promptToRememberSession = newPromptToRememberSession
+        }
+
+        let newQuitOnLastWindowClosed = Self.readBool(
+            Key.quitOnLastWindowClosed,
+            defaultValue: false,
+            from: defaults
+        )
+        if quitOnLastWindowClosed != newQuitOnLastWindowClosed {
+            quitOnLastWindowClosed = newQuitOnLastWindowClosed
+        }
     }
 
     func setZoomStepPercent(_ value: Int) {
@@ -95,6 +127,26 @@ final class AppPreferences: NSObject, ObservableObject {
         }
 
         defaults.set(value, forKey: Key.navigationInterval)
+        refresh()
+    }
+
+    func setImageSortField(_ value: ImageSortField) {
+        defaults.set(value.rawValue, forKey: Key.imageSortField)
+        refresh()
+    }
+
+    func setImageSortDirection(_ value: SortDirection) {
+        defaults.set(value.rawValue, forKey: Key.imageSortDirection)
+        refresh()
+    }
+
+    func setPromptToRememberSession(_ value: Bool) {
+        defaults.set(value, forKey: Key.promptToRememberSession)
+        refresh()
+    }
+
+    func setQuitOnLastWindowClosed(_ value: Bool) {
+        defaults.set(value, forKey: Key.quitOnLastWindowClosed)
         refresh()
     }
 
@@ -152,5 +204,16 @@ final class AppPreferences: NSObject, ObservableObject {
         }
 
         return value.intValue
+    }
+
+    private static func readBool(
+        _ key: String,
+        defaultValue: Bool,
+        from defaults: UserDefaults
+    ) -> Bool {
+        guard defaults.object(forKey: key) != nil else {
+            return defaultValue
+        }
+        return defaults.bool(forKey: key)
     }
 }

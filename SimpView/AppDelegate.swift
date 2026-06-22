@@ -44,6 +44,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return clearSessionForTermination()
         }
 
+        guard AppPreferences.shared.promptToRememberSession else {
+            return clearSessionForTermination()
+        }
+
         let alert = NSAlert()
         alert.alertStyle = .informational
         alert.messageText = "Remember Session?"
@@ -77,6 +81,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             WindowManager.shared.newWindow()
         }
         return true
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(
+        _ sender: NSApplication
+    ) -> Bool {
+        AppPreferences.shared.quitOnLastWindowClosed
     }
 
     @objc
