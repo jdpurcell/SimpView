@@ -24,6 +24,17 @@ struct ImageViewerView: View {
                     controller: viewportController
                 )
                 .accessibilityLabel(document.displayName)
+            } else if document.hasDecodeError {
+                ContentUnavailableView {
+                    Label(
+                        "Unable to Open Image",
+                        systemImage: "exclamationmark.triangle"
+                    )
+                } description: {
+                    Text(
+                        "The image format isn’t supported, or the file is damaged."
+                    )
+                }
             } else {
                 ContentUnavailableView {
                     Label("No Image", systemImage: "photo")

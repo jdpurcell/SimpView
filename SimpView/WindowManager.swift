@@ -10,6 +10,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     @Published private(set) var hasOpenWindows = false
     @Published private(set) var activeZoomToFit = false
     @Published private(set) var activeZoomToFill = false
+    @Published private(set) var activeCanZoom = false
     @Published private(set) var recentDocumentURLs: [URL] = []
 
     private var windowControllers: [ViewerWindowController] = []
@@ -318,8 +319,15 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         controller.willOpenImage = { [weak self] in
             self?.stopKeyboardNavigation()
         }
-        controller.didFailToOpenImage = { [weak self] url in
-            self?.presentOpenError(for: url)
+        controller.documentStateChanged = { [weak self, weak controller] in
+            guard
+                let self,
+                controller === self.mostRecentWindowController
+            else {
+                return
+            }
+            self.updateActiveImageURL()
+            self.updateActiveZoomState()
         }
         controller.zoomModeChanged = { [weak self, weak controller] in
             guard
@@ -378,8 +386,16 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     }
 
     private func updateActiveZoomState() {
-        activeZoomToFit = mostRecentWindowController?.isZoomToFit ?? false
-        activeZoomToFill = mostRecentWindowController?.isZoomToFill ?? false
+        let controller = mostRecentWindowController
+        activeCanZoom =
+            controller?.imageDocument.image != nil
+            && controller?.imageDocument.isLoading == false
+        activeZoomToFit = activeCanZoom
+            ? controller?.isZoomToFit ?? false
+            : false
+        activeZoomToFill = activeCanZoom
+            ? controller?.isZoomToFill ?? false
+            : false
     }
 
     private func updateWindowAvailability() {
@@ -520,7 +536,6 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
                 keyboardNavigationController === controller,
                 let direction = keyboardNavigationDirection
             {
-                let startedAt = ProcessInfo.processInfo.systemUptime
                 let didNavigate = await controller.navigateByKeyboard(
                     by: direction
                 )
@@ -539,21 +554,12 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
                     continue
                 }
 
-                let elapsedMilliseconds =
-                    (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000
-                let remainingMilliseconds =
-                    Double(
+                try? await Task.sleep(
+                    for: .milliseconds(
                         AppPreferences.shared
                             .navigationIntervalMilliseconds
-                    ) - elapsedMilliseconds
-
-                if remainingMilliseconds > 0 {
-                    try? await Task.sleep(
-                        for: .milliseconds(
-                            Int(remainingMilliseconds.rounded(.up))
-                        )
                     )
-                }
+                )
             }
 
             keyboardNavigationTask = nil
@@ -567,11 +573,4 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         }
     }
 
-    private func presentOpenError(for url: URL) {
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "The image couldn’t be opened."
-        alert.informativeText = "\(url.lastPathComponent) is not an image format that macOS can decode, or the file is damaged."
-        alert.runModal()
-    }
 }

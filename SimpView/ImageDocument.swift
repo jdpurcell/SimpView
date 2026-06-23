@@ -13,7 +13,9 @@ final class ImageDocument: ObservableObject {
 
     @Published private(set) var image: NSImage?
     @Published private(set) var fileURL: URL?
+    @Published private(set) var isLoading = false
     @Published private(set) var isShowingLoadingIndicator = false
+    @Published private(set) var hasDecodeError = false
 
     private var loadingIndicatorTask: Task<Void, Never>?
     private var loadIdentifier = UUID()
@@ -23,16 +25,16 @@ final class ImageDocument: ObservableObject {
     }
 
     func open(_ url: URL) async -> OpenResult {
-        await open {
-            url
-        }
+        await open(resolvingURL: { url })
     }
 
     func open(
-        resolvingURL: () async -> URL?
+        resolvingURL: () async -> URL?,
+        didResolveURL: (URL) -> Void = { _ in }
     ) async -> OpenResult {
         let identifier = UUID()
         loadIdentifier = identifier
+        isLoading = true
         isShowingLoadingIndicator = false
         scheduleLoadingIndicator(for: identifier)
 
@@ -45,6 +47,10 @@ final class ImageDocument: ObservableObject {
             return .superseded
         }
 
+        fileURL = url
+        hasDecodeError = false
+        didResolveURL(url)
+
         let decodedImage = await Task.detached(priority: .userInitiated) {
             Self.decodeImage(at: url)
         }.value
@@ -53,9 +59,10 @@ final class ImageDocument: ObservableObject {
             return .superseded
         }
 
-        finishLoading(identifier: identifier)
-
         guard let decodedImage else {
+            hasDecodeError = true
+            image = nil
+            finishLoading(identifier: identifier)
             return .failed(url)
         }
 
@@ -63,14 +70,19 @@ final class ImageDocument: ObservableObject {
             cgImage: decodedImage,
             size: NSSize(width: decodedImage.width, height: decodedImage.height)
         )
-        fileURL = url
+        hasDecodeError = false
+        finishLoading(identifier: identifier)
         return .opened(url)
     }
 
     func close() {
         loadIdentifier = UUID()
         loadingIndicatorTask?.cancel()
+        isLoading = false
         isShowingLoadingIndicator = false
+        image = nil
+        fileURL = nil
+        hasDecodeError = false
     }
 
     private func scheduleLoadingIndicator(for identifier: UUID) {
@@ -95,6 +107,7 @@ final class ImageDocument: ObservableObject {
 
         loadingIndicatorTask?.cancel()
         loadingIndicatorTask = nil
+        isLoading = false
         isShowingLoadingIndicator = false
     }
 

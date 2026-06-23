@@ -9,7 +9,7 @@ final class ViewerWindowController: NSWindowController {
     private let folderNavigator = FolderNavigator()
 
     var didOpenImage: ((_ addToRecentDocuments: Bool) -> Void)?
-    var didFailToOpenImage: ((URL) -> Void)?
+    var documentStateChanged: (() -> Void)?
     var willOpenImage: (() -> Void)?
     var zoomModeChanged: (() -> Void)?
 
@@ -71,6 +71,22 @@ final class ViewerWindowController: NSWindowController {
         folderNavigator.listingChanged = { [weak self] in
             self?.updateWindowTitle()
         }
+        imageDocument.$isLoading
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] _ in
+                self?.documentStateChanged?()
+            }
+            .store(in: &cancellables)
+        imageDocument.$isShowingLoadingIndicator
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] isShowing in
+                if isShowing {
+                    self?.updateWindowTitle(revealingBubble: true)
+                }
+            }
+            .store(in: &cancellables)
         AppPreferences.shared.$hideTitleBar
             .removeDuplicates()
             .sink { [weak self] in
@@ -168,7 +184,6 @@ final class ViewerWindowController: NSWindowController {
 
             let didOpen = await performOpen(
                 resolvingURL: { url },
-                reportFailure: false,
                 addToRecentDocuments: false
             )
             guard didOpen else {
@@ -201,7 +216,8 @@ final class ViewerWindowController: NSWindowController {
             imagePath:
                 imageDocument.fileURL?.path
                 ?? restoredState?.imagePath,
-            viewport: imageDocument.image == nil
+            viewport: imageDocument.isLoading
+                || imageDocument.image == nil
                 ? restoredState?.viewport
                 : viewportController.captureSessionState(),
             isMiniaturized: window.isMiniaturized
@@ -308,11 +324,19 @@ final class ViewerWindowController: NSWindowController {
     @discardableResult
     private func performOpen(
         resolvingURL: () async -> URL?,
-        reportFailure: Bool = true,
         addToRecentDocuments: Bool = true
     ) async -> Bool {
         let result = await imageDocument.open(
-            resolvingURL: resolvingURL
+            resolvingURL: resolvingURL,
+            didResolveURL: { [weak self] url in
+                guard let self else {
+                    return
+                }
+                zoomPercentage = nil
+                updateWindowTitle(revealingBubble: true)
+                window?.representedURL = url
+                documentStateChanged?()
+            }
         )
         guard !Task.isCancelled else {
             return false
@@ -326,14 +350,32 @@ final class ViewerWindowController: NSWindowController {
             updateWindowTitle(revealingBubble: true)
             window?.representedURL = url
             didOpenImage?(addToRecentDocuments)
+            await waitForPresentation()
             return true
         case .failed(let url):
-            if reportFailure {
-                didFailToOpenImage?(url)
-            }
-            return false
+            folderNavigator.didOpen(url)
+            zoomPercentage = nil
+            viewportController.prepareForNewImage()
+            updateWindowTitle(revealingBubble: true)
+            window?.representedURL = url
+            didOpenImage?(false)
+            await waitForPresentation()
+            return true
         case .unchanged, .superseded:
             return false
+        }
+    }
+
+    private func waitForPresentation() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { [weak window] in
+                window?.contentView?.layoutSubtreeIfNeeded()
+                window?.displayIfNeeded()
+
+                DispatchQueue.main.async {
+                    continuation.resume()
+                }
+            }
         }
     }
 
@@ -374,6 +416,16 @@ final class ViewerWindowController: NSWindowController {
     private func updateWindowTitle(
         revealingBubble: Bool = false
     ) {
+        // During the loading grace period, keep presenting the previous title.
+        // Navigation still advances internally, but the new file is revealed
+        // only if loading takes long enough to show its placeholder.
+        if
+            imageDocument.isLoading,
+            !imageDocument.isShowingLoadingIndicator
+        {
+            return
+        }
+
         guard imageDocument.fileURL != nil else {
             setWindowTitle(
                 "SimpView",
@@ -385,6 +437,8 @@ final class ViewerWindowController: NSWindowController {
         var components: [String] = []
         if let zoomPercentage {
             components.append(String(format: "%.1f%%", zoomPercentage))
+        } else if imageDocument.isLoading || imageDocument.hasDecodeError {
+            components.append("100.0%")
         }
         if let position = folderNavigator.position(of: imageDocument.fileURL) {
             components.append("\(position.index)/\(position.count)")

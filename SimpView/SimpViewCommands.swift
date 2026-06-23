@@ -135,7 +135,7 @@ struct SimpViewCommands: Commands {
                 Label("Zoom to Fit", systemImage: "arrow.up.left.and.arrow.down.right")
             }
             .keyboardShortcut("9")
-            .disabled(windowManager.activeImageURL == nil)
+            .disabled(!windowManager.activeCanZoom)
 
             Toggle(
                 isOn: Binding(
@@ -146,7 +146,7 @@ struct SimpViewCommands: Commands {
                 Label("Zoom to Fill", systemImage: "arrow.down.right.and.arrow.up.left")
             }
             .keyboardShortcut("8")
-            .disabled(windowManager.activeImageURL == nil)
+            .disabled(!windowManager.activeCanZoom)
 
             Button {
                 windowManager.actualSize()
@@ -154,7 +154,7 @@ struct SimpViewCommands: Commands {
                 Label("Actual Size", systemImage: "1.magnifyingglass")
             }
             .keyboardShortcut("0")
-            .disabled(windowManager.activeImageURL == nil)
+            .disabled(!windowManager.activeCanZoom)
 
             Button {
                 windowManager.zoomIn()
@@ -162,7 +162,7 @@ struct SimpViewCommands: Commands {
                 Label("Zoom In", systemImage: "plus.magnifyingglass")
             }
             .keyboardShortcut("+")
-            .disabled(windowManager.activeImageURL == nil)
+            .disabled(!windowManager.activeCanZoom)
 
             Button {
                 windowManager.zoomOut()
@@ -170,7 +170,7 @@ struct SimpViewCommands: Commands {
                 Label("Zoom Out", systemImage: "minus.magnifyingglass")
             }
             .keyboardShortcut("-")
-            .disabled(windowManager.activeImageURL == nil)
+            .disabled(!windowManager.activeCanZoom)
 
             Divider()
         }
