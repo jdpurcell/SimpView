@@ -32,7 +32,7 @@ final class FolderNavigator {
     private var entries: [Entry] = []
     private var fallbackEntry: Entry?
     private var activeRefresh: ActiveRefresh?
-    private var lastNavigationQueryDate: Date?
+    private var lastImageOpenDate: Date?
     private var sortField: ImageSortField
     private var sortDirection: SortDirection
     private var cancellables: Set<AnyCancellable> = []
@@ -59,7 +59,6 @@ final class FolderNavigator {
         let normalizedURL = normalized(url)
         let newDirectoryURL = normalizedURL.deletingLastPathComponent()
         fallbackEntry = entry(for: normalizedURL)
-        lastNavigationQueryDate = Date()
 
         if directoryURL != newDirectoryURL
             || entryIndex(for: normalizedURL) == nil
@@ -106,10 +105,9 @@ final class FolderNavigator {
         let currentDirectoryURL = normalizedURL.deletingLastPathComponent()
         let now = Date()
         let hasBeenIdle =
-            lastNavigationQueryDate.map {
+            lastImageOpenDate.map {
                 now.timeIntervalSince($0) >= Self.refreshIdleInterval
             } ?? true
-        lastNavigationQueryDate = now
 
         let directoryChanged = directoryURL != currentDirectoryURL
         if directoryChanged {
@@ -132,6 +130,7 @@ final class FolderNavigator {
     }
 
     func didOpen(_ url: URL) {
+        lastImageOpenDate = Date()
         let openedEntry = entry(for: normalized(url))
         fallbackEntry = openedEntry
 
