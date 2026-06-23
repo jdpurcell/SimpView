@@ -44,7 +44,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     func saveSession() throws {
         let state = SessionState(
             formatVersion: SessionState.currentFormatVersion,
-            windows: windowControllers.compactMap {
+            windows: controllersInSessionOrder.compactMap {
                 $0.captureSessionState()
             }
         )
@@ -62,10 +62,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         }
 
         stopKeyboardNavigation()
-        var restoredControllers: [(
-            controller: ViewerWindowController,
-            state: SessionWindowState
-        )] = []
+        var restoredControllers: [ViewerWindowController] = []
 
         for windowState in state.windows {
             let controller = makeWindowController()
@@ -87,18 +84,16 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
                 window.orderFront(nil)
             }
 
-            restoredControllers.append((controller, windowState))
+            restoredControllers.append(controller)
         }
 
         updateWindowAvailability()
 
         let keyController =
-            (restoredControllers.first { $0.state.isKeyWindow })?
-                .controller
-            ?? (restoredControllers.last {
-                !$0.state.isMiniaturized
-            })?.controller
-            ?? restoredControllers.last?.controller
+            restoredControllers.last {
+                $0.window?.isMiniaturized == false
+            }
+            ?? restoredControllers.last
         lastFocusedWindowController = keyController
 
         if let window = keyController?.window, !window.isMiniaturized {
@@ -273,6 +268,20 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         updateActiveZoomState()
     }
 
+    func windowWillEnterFullScreen(_ notification: Notification) {
+        controller(for: notification.object as? NSWindow)?
+            .windowWillEnterFullScreen()
+    }
+
+    func windowDidFailToEnterFullScreen(_ window: NSWindow) {
+        controller(for: window)?.windowDidFailToEnterFullScreen()
+    }
+
+    func windowDidExitFullScreen(_ notification: Notification) {
+        controller(for: notification.object as? NSWindow)?
+            .windowDidExitFullScreen()
+    }
+
     private func makeWindow() -> ViewerWindowController {
         let controller = makeWindowController()
         windowControllers.append(controller)
@@ -330,6 +339,38 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
 
     private var mostRecentWindowController: ViewerWindowController? {
         lastFocusedWindowController ?? windowControllers.last
+    }
+
+    private var controllersInSessionOrder: [ViewerWindowController] {
+        var seen: Set<ObjectIdentifier> = []
+        let regularFrontToBack = NSApp.orderedWindows.compactMap {
+            controller(for: $0)
+        }.filter {
+            guard
+                $0.window?.isMiniaturized == false,
+                !$0.isFullScreenForSession
+            else {
+                return false
+            }
+            return seen.insert(ObjectIdentifier($0)).inserted
+        }
+        let remainingRegularControllers = windowControllers.filter {
+            guard !$0.isFullScreenForSession else {
+                return false
+            }
+            return seen.insert(ObjectIdentifier($0)).inserted
+        }
+        let fullScreenControllers = windowControllers.filter {
+            $0.isFullScreenForSession
+        }
+
+        // Regular visible windows are stored bottom to top so orderFront(_:)
+        // recreates their stack. Full-screen windows are stored last and
+        // restored as ordinary topmost windows using their pre-full-screen
+        // frames.
+        return remainingRegularControllers
+            + regularFrontToBack.reversed()
+            + fullScreenControllers
     }
 
     private func updateActiveImageURL() {

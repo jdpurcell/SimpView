@@ -44,13 +44,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return clearSessionForTermination()
         }
 
-        guard AppPreferences.shared.promptToRememberSession else {
-            return clearSessionForTermination()
+        switch AppPreferences.shared.sessionQuitBehavior {
+        case .followSystemSetting:
+            return systemKeepsWindowsWhenQuitting
+                ? saveSessionForTermination()
+                : clearSessionForTermination()
+        case .askWhenQuitting:
+            return presentSessionQuitAlert()
         }
+    }
 
+    private func presentSessionQuitAlert()
+        -> NSApplication.TerminateReply
+    {
         let alert = NSAlert()
         alert.alertStyle = .informational
-        alert.messageText = "Remember Session?"
         alert.informativeText =
             "Would you like to remember your opened images and re-open them at next launch?"
         alert.addButton(withTitle: "Remember")
@@ -65,6 +73,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         default:
             return .terminateCancel
         }
+    }
+
+    private var systemKeepsWindowsWhenQuitting: Bool {
+        let key = "NSQuitAlwaysKeepsWindows"
+        return (UserDefaults.standard.object(forKey: key) as? NSNumber)?
+            .boolValue ?? true
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {

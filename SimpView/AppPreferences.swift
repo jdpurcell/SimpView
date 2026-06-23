@@ -11,6 +11,11 @@ enum SortDirection: String, Hashable, Sendable {
     case descending
 }
 
+enum SessionQuitBehavior: String, Hashable, Sendable {
+    case followSystemSetting
+    case askWhenQuitting
+}
+
 @MainActor
 final class AppPreferences: NSObject, ObservableObject {
     static let shared = AppPreferences()
@@ -19,7 +24,7 @@ final class AppPreferences: NSObject, ObservableObject {
     @Published private(set) var imageSortField: ImageSortField
     @Published private(set) var imageSortDirection: SortDirection
     @Published private(set) var navigationIntervalMilliseconds: Int
-    @Published private(set) var promptToRememberSession: Bool
+    @Published private(set) var sessionQuitBehavior: SessionQuitBehavior
     @Published private(set) var quitOnLastWindowClosed: Bool
     @Published private(set) var hideTitleBar: Bool
 
@@ -32,7 +37,7 @@ final class AppPreferences: NSObject, ObservableObject {
         static let imageSortField = "imageSortField"
         static let imageSortDirection = "imageSortDirection"
         static let navigationInterval = "navigationInterval"
-        static let promptToRememberSession = "promptToRememberSession"
+        static let sessionQuitBehavior = "sessionQuitBehavior"
         static let quitOnLastWindowClosed = "quitOnLastWindowClosed"
         static let hideTitleBar = "hideTitleBar"
     }
@@ -53,9 +58,7 @@ final class AppPreferences: NSObject, ObservableObject {
         imageSortDirection = Self.readImageSortDirection(from: defaults)
         navigationIntervalMilliseconds =
             Self.readNavigationIntervalMilliseconds(from: defaults)
-        promptToRememberSession = Self.readBool(
-            Key.promptToRememberSession,
-            defaultValue: true,
+        sessionQuitBehavior = Self.readSessionQuitBehavior(
             from: defaults
         )
         quitOnLastWindowClosed = Self.readBool(
@@ -100,13 +103,11 @@ final class AppPreferences: NSObject, ObservableObject {
             navigationIntervalMilliseconds = newNavigationInterval
         }
 
-        let newPromptToRememberSession = Self.readBool(
-            Key.promptToRememberSession,
-            defaultValue: true,
+        let newSessionQuitBehavior = Self.readSessionQuitBehavior(
             from: defaults
         )
-        if promptToRememberSession != newPromptToRememberSession {
-            promptToRememberSession = newPromptToRememberSession
+        if sessionQuitBehavior != newSessionQuitBehavior {
+            sessionQuitBehavior = newSessionQuitBehavior
         }
 
         let newQuitOnLastWindowClosed = Self.readBool(
@@ -156,8 +157,8 @@ final class AppPreferences: NSObject, ObservableObject {
         refresh()
     }
 
-    func setPromptToRememberSession(_ value: Bool) {
-        defaults.set(value, forKey: Key.promptToRememberSession)
+    func setSessionQuitBehavior(_ value: SessionQuitBehavior) {
+        defaults.set(value.rawValue, forKey: Key.sessionQuitBehavior)
         refresh()
     }
 
@@ -225,6 +226,19 @@ final class AppPreferences: NSObject, ObservableObject {
         }
 
         return value.intValue
+    }
+
+    private static func readSessionQuitBehavior(
+        from defaults: UserDefaults
+    ) -> SessionQuitBehavior {
+        guard
+            let value = defaults.string(forKey: Key.sessionQuitBehavior),
+            let behavior = SessionQuitBehavior(rawValue: value)
+        else {
+            return .followSystemSetting
+        }
+
+        return behavior
     }
 
     private static func readBool(

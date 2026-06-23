@@ -1,7 +1,7 @@
 import Foundation
 
 struct SessionState: Codable {
-    static let currentFormatVersion = 1
+    static let currentFormatVersion = 2
 
     let formatVersion: Int
     let windows: [SessionWindowState]
@@ -11,7 +11,6 @@ struct SessionWindowState: Codable {
     let frame: SessionRect
     let imagePath: String?
     let viewport: ViewportSessionState?
-    let isKeyWindow: Bool
     let isMiniaturized: Bool
 }
 

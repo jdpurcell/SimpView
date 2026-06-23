@@ -68,13 +68,22 @@ struct SettingsView: View {
             }
 
             Section {
-                Toggle(
-                    "Ask to remember open images when quitting",
-                    isOn: promptToRememberSession
-                )
+                LabeledContent("Remember session when quitting") {
+                    Picker(
+                        "Remember session when quitting",
+                        selection: sessionQuitBehavior
+                    ) {
+                        Text("Follow System Setting")
+                            .tag(SessionQuitBehavior.followSystemSetting)
+                        Text("Ask When Quitting")
+                            .tag(SessionQuitBehavior.askWhenQuitting)
+                    }
+                    .labelsHidden()
+                    .frame(width: 180)
+                }
 
                 Toggle(
-                    "Quit when the last window is closed",
+                    "Quit when last window is closed",
                     isOn: quitOnLastWindowClosed
                 )
 
@@ -121,10 +130,10 @@ struct SettingsView: View {
         )
     }
 
-    private var promptToRememberSession: Binding<Bool> {
+    private var sessionQuitBehavior: Binding<SessionQuitBehavior> {
         Binding(
-            get: { preferences.promptToRememberSession },
-            set: { preferences.setPromptToRememberSession($0) }
+            get: { preferences.sessionQuitBehavior },
+            set: { preferences.setSessionQuitBehavior($0) }
         )
     }
 

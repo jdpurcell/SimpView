@@ -20,6 +20,7 @@ final class ViewerWindowController: NSWindowController {
     private let presentation = ViewerWindowPresentation()
     private var isTitleBarHidden = false
     private var isHoveringWindowButtons = false
+    private var frameBeforeFullScreen: NSRect?
 
     init() {
         super.init(window: nil)
@@ -188,7 +189,7 @@ final class ViewerWindowController: NSWindowController {
             return nil
         }
 
-        let frame = window.frame
+        let frame = frameBeforeFullScreen ?? window.frame
         let restoredState = pendingRestoredWindowState
         return SessionWindowState(
             frame: SessionRect(
@@ -203,9 +204,28 @@ final class ViewerWindowController: NSWindowController {
             viewport: imageDocument.image == nil
                 ? restoredState?.viewport
                 : viewportController.captureSessionState(),
-            isKeyWindow: window.isKeyWindow,
             isMiniaturized: window.isMiniaturized
         )
+    }
+
+    var isFullScreenForSession: Bool {
+        frameBeforeFullScreen != nil
+            || window?.styleMask.contains(.fullScreen) == true
+    }
+
+    func windowWillEnterFullScreen() {
+        guard frameBeforeFullScreen == nil else {
+            return
+        }
+        frameBeforeFullScreen = window?.frame
+    }
+
+    func windowDidExitFullScreen() {
+        frameBeforeFullScreen = nil
+    }
+
+    func windowDidFailToEnterFullScreen() {
+        frameBeforeFullScreen = nil
     }
 
     var hasImageForSession: Bool {
