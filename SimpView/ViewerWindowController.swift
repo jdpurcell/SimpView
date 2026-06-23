@@ -495,6 +495,14 @@ final class ViewerWindowController: NSWindowController {
             return
         }
 
+        if imageDocument.isLoading, imageDocument.isResolvingURL {
+            setWindowTitle(
+                "SimpView (Refreshing folder…)",
+                revealingBubble: revealingBubble
+            )
+            return
+        }
+
         guard imageDocument.fileURL != nil else {
             setWindowTitle(
                 "SimpView",

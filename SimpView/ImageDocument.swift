@@ -14,6 +14,7 @@ final class ImageDocument: ObservableObject {
     @Published private(set) var image: NSImage?
     @Published private(set) var fileURL: URL?
     @Published private(set) var isLoading = false
+    @Published private(set) var isResolvingURL = false
     @Published private(set) var isShowingLoadingIndicator = false
     @Published private(set) var hasDecodeError = false
 
@@ -36,16 +37,20 @@ final class ImageDocument: ObservableObject {
         let identifier = UUID()
         loadIdentifier = identifier
         isLoading = true
+        isResolvingURL = true
         isShowingLoadingIndicator = false
         scheduleLoadingIndicator(for: identifier)
 
-        guard let url = await resolvingURL() else {
-            finishLoading(identifier: identifier)
-            return loadIdentifier == identifier ? .unchanged : .superseded
-        }
+        let resolvedURL = await resolvingURL()
 
         guard loadIdentifier == identifier, !Task.isCancelled else {
             return .superseded
+        }
+
+        isResolvingURL = false
+        guard let url = resolvedURL else {
+            finishLoading(identifier: identifier)
+            return .unchanged
         }
 
         fileURL = url
@@ -85,6 +90,7 @@ final class ImageDocument: ObservableObject {
         loadIdentifier = UUID()
         loadingIndicatorTask?.cancel()
         isLoading = false
+        isResolvingURL = false
         isShowingLoadingIndicator = false
         image = nil
         fileURL = nil
@@ -114,6 +120,7 @@ final class ImageDocument: ObservableObject {
         loadingIndicatorTask?.cancel()
         loadingIndicatorTask = nil
         isLoading = false
+        isResolvingURL = false
         isShowingLoadingIndicator = false
     }
 
