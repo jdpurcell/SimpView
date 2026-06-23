@@ -7,6 +7,7 @@ final class ViewerWindowController: NSWindowController {
     let imageDocument = ImageDocument()
     let viewportController = ImageViewportController()
     private let folderNavigator = FolderNavigator()
+    private let imagePreloadCache = ImagePreloadCache()
 
     var didOpenImage: ((_ addToRecentDocuments: Bool) -> Void)?
     var documentStateChanged: (() -> Void)?
@@ -21,6 +22,7 @@ final class ViewerWindowController: NSWindowController {
     private var isTitleBarHidden = false
     private var isHoveringWindowButtons = false
     private var frameBeforeFullScreen: NSRect?
+    private var isImagePreloadingSuspended = false
 
     init() {
         super.init(window: nil)
@@ -70,6 +72,7 @@ final class ViewerWindowController: NSWindowController {
         }
         folderNavigator.listingChanged = { [weak self] in
             self?.updateWindowTitle()
+            self?.updateImagePreloads()
         }
         imageDocument.$isLoading
             .removeDuplicates()
@@ -91,6 +94,22 @@ final class ViewerWindowController: NSWindowController {
             .removeDuplicates()
             .sink { [weak self] in
                 self?.setTitleBarHidden($0)
+            }
+            .store(in: &cancellables)
+        AppPreferences.shared.$preloadAdjacentImages
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] enabled in
+                guard let self else {
+                    return
+                }
+
+                Task {
+                    await self.imagePreloadCache.setEnabled(enabled)
+                    if enabled {
+                        self.updateImagePreloads()
+                    }
+                }
             }
             .store(in: &cancellables)
         NotificationCenter.default.publisher(
@@ -282,6 +301,17 @@ final class ViewerWindowController: NSWindowController {
         await openTask?.value
     }
 
+    func setImagePreloadingSuspended(_ suspended: Bool) {
+        guard isImagePreloadingSuspended != suspended else {
+            return
+        }
+
+        isImagePreloadingSuspended = suspended
+        if !suspended {
+            updateImagePreloads()
+        }
+    }
+
     private func navigate(by offset: Int) {
         guard let currentURL = imageDocument.fileURL else {
             return
@@ -336,6 +366,15 @@ final class ViewerWindowController: NSWindowController {
                 updateWindowTitle(revealingBubble: true)
                 window?.representedURL = url
                 documentStateChanged?()
+            },
+            decode: { [imagePreloadCache] url in
+                if AppPreferences.shared.preloadAdjacentImages {
+                    return await imagePreloadCache.image(at: url)
+                }
+
+                return await Task.detached(priority: .userInitiated) {
+                    ImageDocument.decodeImage(at: url)
+                }.value
             }
         )
         guard !Task.isCancelled else {
@@ -351,6 +390,7 @@ final class ViewerWindowController: NSWindowController {
             window?.representedURL = url
             didOpenImage?(addToRecentDocuments)
             await waitForPresentation()
+            updateImagePreloads()
             return true
         case .failed(let url):
             folderNavigator.didOpen(url)
@@ -360,6 +400,7 @@ final class ViewerWindowController: NSWindowController {
             window?.representedURL = url
             didOpenImage?(false)
             await waitForPresentation()
+            updateImagePreloads()
             return true
         case .unchanged, .superseded:
             return false
@@ -383,6 +424,30 @@ final class ViewerWindowController: NSWindowController {
         openTask?.cancel()
         pendingRestoredWindowState = nil
         imageDocument.close()
+        Task {
+            await self.imagePreloadCache.removeAll()
+        }
+    }
+
+    private func updateImagePreloads() {
+        guard
+            AppPreferences.shared.preloadAdjacentImages,
+            !isImagePreloadingSuspended,
+            let currentURL = imageDocument.fileURL,
+            !imageDocument.isLoading
+        else {
+            return
+        }
+
+        let adjacentImages = folderNavigator.adjacentImages(
+            to: currentURL
+        )
+        Task {
+            await imagePreloadCache.updateNeighborhood(
+                currentURL: currentURL,
+                adjacentImages: adjacentImages
+            )
+        }
     }
 
     var isZoomToFit: Bool {

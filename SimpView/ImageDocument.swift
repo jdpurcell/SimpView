@@ -30,7 +30,8 @@ final class ImageDocument: ObservableObject {
 
     func open(
         resolvingURL: () async -> URL?,
-        didResolveURL: (URL) -> Void = { _ in }
+        didResolveURL: (URL) -> Void = { _ in },
+        decode: ((URL) async -> CGImage?)? = nil
     ) async -> OpenResult {
         let identifier = UUID()
         loadIdentifier = identifier
@@ -51,9 +52,14 @@ final class ImageDocument: ObservableObject {
         hasDecodeError = false
         didResolveURL(url)
 
-        let decodedImage = await Task.detached(priority: .userInitiated) {
-            Self.decodeImage(at: url)
-        }.value
+        let decodedImage: CGImage?
+        if let decode {
+            decodedImage = await decode(url)
+        } else {
+            decodedImage = await Task.detached(priority: .userInitiated) {
+                Self.decodeImage(at: url)
+            }.value
+        }
 
         guard loadIdentifier == identifier else {
             return .superseded
@@ -111,7 +117,7 @@ final class ImageDocument: ObservableObject {
         isShowingLoadingIndicator = false
     }
 
-    nonisolated private static func decodeImage(at url: URL) -> CGImage? {
+    nonisolated static func decodeImage(at url: URL) -> CGImage? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
             return nil
         }

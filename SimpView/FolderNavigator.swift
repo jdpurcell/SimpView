@@ -10,12 +10,19 @@ final class FolderNavigator {
         let count: Int
     }
 
+    struct ImageReference: Sendable {
+        let url: URL
+        let modificationDate: Date
+        let fileSize: Int
+    }
+
     var listingChanged: (() -> Void)?
 
     private struct Entry: Sendable {
         let url: URL
         let name: String
         let modificationDate: Date
+        let fileSize: Int
     }
 
     private struct ActiveRefresh {
@@ -160,6 +167,28 @@ final class FolderNavigator {
         return Position(index: index + 1, count: entries.count)
     }
 
+    func adjacentImages(to url: URL?) -> [ImageReference] {
+        guard
+            let url,
+            let index = entryIndex(for: normalized(url))
+        else {
+            return []
+        }
+
+        return [index - 1, index + 1].compactMap { neighborIndex in
+            guard entries.indices.contains(neighborIndex) else {
+                return nil
+            }
+
+            let entry = entries[neighborIndex]
+            return ImageReference(
+                url: entry.url,
+                modificationDate: entry.modificationDate,
+                fileSize: entry.fileSize
+            )
+        }
+    }
+
     private func startBackgroundRefresh(for directoryURL: URL) {
         let refresh = startRefresh(for: directoryURL)
         Task { [weak self] in
@@ -269,16 +298,19 @@ final class FolderNavigator {
     }
 
     private func entry(for url: URL) -> Entry {
-        let modificationDate = (
-            try? url.resourceValues(
-                forKeys: [.contentModificationDateKey]
-            ).contentModificationDate
-        ) ?? .distantPast
+        let values = try? url.resourceValues(
+            forKeys: [
+                .contentModificationDateKey,
+                .fileSizeKey,
+            ]
+        )
 
         return Entry(
             url: url,
             name: url.lastPathComponent,
-            modificationDate: modificationDate
+            modificationDate:
+                values?.contentModificationDate ?? .distantPast,
+            fileSize: values?.fileSize ?? -1
         )
     }
 
@@ -293,6 +325,7 @@ final class FolderNavigator {
     ) -> [Entry] {
         let keys: Set<URLResourceKey> = [
             .contentModificationDateKey,
+            .fileSizeKey,
             .isRegularFileKey,
         ]
         guard
@@ -328,7 +361,8 @@ final class FolderNavigator {
                 url: url,
                 name: url.lastPathComponent,
                 modificationDate:
-                    values.contentModificationDate ?? .distantPast
+                    values.contentModificationDate ?? .distantPast,
+                fileSize: values.fileSize ?? -1
             ))
         }
 

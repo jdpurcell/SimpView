@@ -72,6 +72,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
             }
 
             windowControllers.append(controller)
+            controller.setImagePreloadingSuspended(true)
             window.setFrame(
                 restoredFrame(for: windowState.frame, window: window),
                 display: false
@@ -103,6 +104,16 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
 
         updateActiveImageURL()
         updateActiveZoomState()
+
+        Task {
+            for controller in restoredControllers {
+                await controller.waitForCurrentOpen()
+            }
+            for controller in restoredControllers {
+                controller.setImagePreloadingSuspended(false)
+            }
+        }
+
         return true
     }
 

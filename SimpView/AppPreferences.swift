@@ -24,6 +24,7 @@ final class AppPreferences: NSObject, ObservableObject {
     @Published private(set) var imageSortField: ImageSortField
     @Published private(set) var imageSortDirection: SortDirection
     @Published private(set) var navigationIntervalMilliseconds: Int
+    @Published private(set) var preloadAdjacentImages: Bool
     @Published private(set) var sessionQuitBehavior: SessionQuitBehavior
     @Published private(set) var quitOnLastWindowClosed: Bool
     @Published private(set) var hideTitleBar: Bool
@@ -37,6 +38,7 @@ final class AppPreferences: NSObject, ObservableObject {
         static let imageSortField = "imageSortField"
         static let imageSortDirection = "imageSortDirection"
         static let navigationInterval = "navigationInterval"
+        static let preloadAdjacentImages = "preloadAdjacentImages"
         static let sessionQuitBehavior = "sessionQuitBehavior"
         static let quitOnLastWindowClosed = "quitOnLastWindowClosed"
         static let hideTitleBar = "hideTitleBar"
@@ -58,6 +60,11 @@ final class AppPreferences: NSObject, ObservableObject {
         imageSortDirection = Self.readImageSortDirection(from: defaults)
         navigationIntervalMilliseconds =
             Self.readNavigationIntervalMilliseconds(from: defaults)
+        preloadAdjacentImages = Self.readBool(
+            Key.preloadAdjacentImages,
+            defaultValue: true,
+            from: defaults
+        )
         sessionQuitBehavior = Self.readSessionQuitBehavior(
             from: defaults
         )
@@ -103,6 +110,15 @@ final class AppPreferences: NSObject, ObservableObject {
             navigationIntervalMilliseconds = newNavigationInterval
         }
 
+        let newPreloadAdjacentImages = Self.readBool(
+            Key.preloadAdjacentImages,
+            defaultValue: true,
+            from: defaults
+        )
+        if preloadAdjacentImages != newPreloadAdjacentImages {
+            preloadAdjacentImages = newPreloadAdjacentImages
+        }
+
         let newSessionQuitBehavior = Self.readSessionQuitBehavior(
             from: defaults
         )
@@ -144,6 +160,11 @@ final class AppPreferences: NSObject, ObservableObject {
         }
 
         defaults.set(value, forKey: Key.navigationInterval)
+        refresh()
+    }
+
+    func setPreloadAdjacentImages(_ value: Bool) {
+        defaults.set(value, forKey: Key.preloadAdjacentImages)
         refresh()
     }
 

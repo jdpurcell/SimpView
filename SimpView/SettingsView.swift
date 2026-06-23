@@ -46,6 +46,11 @@ struct SettingsView: View {
             }
 
             Section {
+                Toggle(
+                    "Preload adjacent images",
+                    isOn: preloadAdjacentImages
+                )
+
                 LabeledContent("Navigation speed") {
                     HStack(spacing: 8) {
                         Text(
@@ -127,6 +132,13 @@ struct SettingsView: View {
             set: {
                 preferences.setNavigationIntervalMilliseconds($0)
             }
+        )
+    }
+
+    private var preloadAdjacentImages: Binding<Bool> {
+        Binding(
+            get: { preferences.preloadAdjacentImages },
+            set: { preferences.setPreloadAdjacentImages($0) }
         )
     }
 
