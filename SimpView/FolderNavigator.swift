@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import ImageIO
 import UniformTypeIdentifiers
 
 @MainActor
@@ -336,9 +337,15 @@ final class FolderNavigator {
     }
 
     nonisolated private static func isImage(_ url: URL) -> Bool {
-        UTType(filenameExtension: url.pathExtension)?
-            .conforms(to: .image) == true
+        guard let type = UTType(filenameExtension: url.pathExtension) else {
+            return false
+        }
+
+        return supportedImageTypeIdentifiers.contains(type.identifier)
     }
+
+    nonisolated private static let supportedImageTypeIdentifiers: Set<String> =
+        Set(CGImageSourceCopyTypeIdentifiers() as! [String])
 
     nonisolated private static func sorted(
         _ entries: [Entry],
