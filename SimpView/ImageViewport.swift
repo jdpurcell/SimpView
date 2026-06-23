@@ -21,6 +21,7 @@ final class ImageViewportController {
 
     var zoomChanged: ((Double?) -> Void)?
     var zoomModeChanged: (() -> Void)?
+    var adjacentNavigationRequested: ((Int) -> Void)?
 
     private weak var viewport: ZoomableImageView?
     private var pendingSessionState: ViewportSessionState?
@@ -37,6 +38,9 @@ final class ImageViewportController {
             }
             zoomMode = mode
             zoomModeChanged?()
+        }
+        viewport.adjacentNavigationRequested = { [weak self] offset in
+            self?.adjacentNavigationRequested?(offset)
         }
         if let pendingSessionState {
             viewport.restoreSessionState(pendingSessionState)
@@ -140,6 +144,7 @@ final class ZoomableImageView: NSView {
 
     var zoomChanged: ((Double?) -> Void)?
     var zoomModeChanged: ((ViewportZoomMode) -> Void)?
+    var adjacentNavigationRequested: ((Int) -> Void)?
     weak var controller: ImageViewportController?
 
     var image: NSImage? {
@@ -284,6 +289,9 @@ final class ZoomableImageView: NSView {
         }
         scrollView.userAutomaticZoomRequested = { [weak self] mode in
             self?.setZoomMode(mode, centeringImage: true)
+        }
+        scrollView.userAdjacentNavigationRequested = { [weak self] offset in
+            self?.adjacentNavigationRequested?(offset)
         }
         addSubview(scrollView)
     }
@@ -662,6 +670,8 @@ private final class MagnifyingScrollView: NSScrollView {
     private enum ScrollMode {
         case native
         case zoom
+        case navigation
+        case ignored
     }
 
     var userMagnificationBegan: (() -> Void)?
@@ -674,6 +684,7 @@ private final class MagnifyingScrollView: NSScrollView {
     var userPanned: ((NSPoint) -> Void)?
     var userPanEnded: (() -> Void)?
     var userAutomaticZoomRequested: ((ViewportZoomMode) -> Void)?
+    var userAdjacentNavigationRequested: ((Int) -> Void)?
 
     private var isMagnifying = false
     private var magnificationAtGestureStart: CGFloat?
@@ -857,8 +868,37 @@ private final class MagnifyingScrollView: NSScrollView {
         let isCommandScroll = event.modifierFlags.contains(.command)
         let isMomentum = !event.momentumPhase.isEmpty
 
-        if !isMomentum {
-            scrollMode = isCommandScroll ? .native : .zoom
+        if event.phase.contains(.began) && !isMomentum {
+            scrollMode = isCommandScroll ? .native : nil
+        } else if !isMomentum && isCommandScroll {
+            scrollMode = .native
+        } else if
+            !isMomentum,
+            scrollMode == .native,
+            !isCommandScroll
+        {
+            scrollMode = nil
+        }
+
+        if
+            !isMomentum,
+            !isCommandScroll,
+            scrollMode == nil
+        {
+            determineScrollMode(from: event)
+            guard scrollMode != nil else {
+                return
+            }
+        }
+
+        if scrollMode == .navigation || scrollMode == .ignored {
+            if event.phase.contains(.ended)
+                || event.phase.contains(.cancelled)
+                || event.momentumPhase.contains(.ended)
+            {
+                scrollMode = nil
+            }
+            return
         }
 
         let shouldScrollNatively =
@@ -893,13 +933,12 @@ private final class MagnifyingScrollView: NSScrollView {
             return
         }
 
-        let horizontalDelta = event.scrollingDeltaX
+        guard let documentView else {
+            return
+        }
+
         let verticalDelta = event.scrollingDeltaY
-        guard
-            verticalDelta != 0,
-            abs(verticalDelta) >= abs(horizontalDelta),
-            let documentView
-        else {
+        guard verticalDelta != 0 else {
             return
         }
 
@@ -932,6 +971,90 @@ private final class MagnifyingScrollView: NSScrollView {
 
         if event.phase.isEmpty && event.momentumPhase.isEmpty {
             scheduleScrollZoomEnd()
+        }
+    }
+
+    private func determineScrollMode(from event: NSEvent) {
+        guard
+            event.hasPreciseScrollingDeltas,
+            !event.phase.isEmpty
+        else {
+            scrollMode = .zoom
+            return
+        }
+
+        guard
+            event.scrollingDeltaX != 0
+                || event.scrollingDeltaY != 0
+        else {
+            return
+        }
+
+        guard
+            abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
+        else {
+            scrollMode = .zoom
+            return
+        }
+
+        guard NSEvent.isSwipeTrackingFromScrollEventsEnabled else {
+            scrollMode = .ignored
+            return
+        }
+
+        scrollMode = .navigation
+        trackHorizontalSwipe(event)
+    }
+
+    private func trackHorizontalSwipe(_ event: NSEvent) {
+        var didNavigate = false
+        var amountAtGestureEnd: CGFloat?
+
+        event.trackSwipeEvent(
+            options: [.lockDirection, .clampGestureAmount],
+            dampenAmountThresholdMin: -1,
+            max: 1
+        ) { [weak self] amount, phase, isComplete, _ in
+            if phase.contains(.ended) {
+                amountAtGestureEnd = amount
+            }
+
+            guard !didNavigate else {
+                return
+            }
+
+            let settledDirection: Int?
+            if phase.isEmpty, let amountAtGestureEnd {
+                if abs(amount) > abs(amountAtGestureEnd) {
+                    settledDirection = amount > 0 ? 1 : -1
+                } else {
+                    settledDirection = nil
+                }
+            } else if isComplete {
+                if amount >= 1 {
+                    settledDirection = 1
+                } else if amount <= -1 {
+                    settledDirection = -1
+                } else {
+                    settledDirection = nil
+                }
+            } else {
+                settledDirection = nil
+            }
+
+            guard let settledDirection else {
+                return
+            }
+
+            didNavigate = true
+            Task { @MainActor [weak self] in
+                guard let self else {
+                    return
+                }
+
+                scrollMode = nil
+                userAdjacentNavigationRequested?(settledDirection)
+            }
         }
     }
 

@@ -70,6 +70,10 @@ final class ViewerWindowController: NSWindowController {
         viewportController.zoomModeChanged = { [weak self] in
             self?.zoomModeChanged?()
         }
+        viewportController.adjacentNavigationRequested = {
+            [weak self] offset in
+            self?.navigate(by: offset)
+        }
         folderNavigator.listingChanged = { [weak self] in
             self?.updateWindowTitle()
             self?.updateImagePreloads()
