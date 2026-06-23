@@ -74,7 +74,12 @@ final class ImageViewportController {
 
     func restoreSessionState(_ state: ViewportSessionState) {
         zoomMode = state.zoomMode
-        pendingSessionState = state
+        if let viewport {
+            pendingSessionState = nil
+            viewport.restoreSessionState(state)
+        } else {
+            pendingSessionState = state
+        }
         zoomModeChanged?()
     }
 
