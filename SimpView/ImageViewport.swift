@@ -1028,29 +1028,38 @@ private final class MagnifyingScrollView: NSScrollView {
                 return
             }
 
-            let settledDirection: Int?
+            // Ordinarily the first post-release callback reveals whether
+            // AppKit is settling toward ±1 (commit) or back toward 0
+            // (cancel), so navigation can begin before its invisible
+            // settling animation finishes. The completion branch is a
+            // fallback for a sequence that reaches its endpoint without an
+            // observable intermediate callback.
+            let settledAmount: CGFloat?
             if phase.isEmpty, let amountAtGestureEnd {
                 if abs(amount) > abs(amountAtGestureEnd) {
-                    settledDirection = amount > 0 ? 1 : -1
+                    settledAmount = amount
                 } else {
-                    settledDirection = nil
+                    settledAmount = nil
                 }
             } else if isComplete {
                 if amount >= 1 {
-                    settledDirection = 1
+                    settledAmount = 1
                 } else if amount <= -1 {
-                    settledDirection = -1
+                    settledAmount = -1
                 } else {
-                    settledDirection = nil
+                    settledAmount = nil
                 }
             } else {
-                settledDirection = nil
+                settledAmount = nil
             }
 
-            guard let settledDirection else {
+            guard let settledAmount else {
                 return
             }
 
+            // AppKit's swipe amount describes content movement. Page-style
+            // navigation uses the opposite sign: swiping right goes forward.
+            let navigationOffset = settledAmount > 0 ? -1 : 1
             didNavigate = true
             Task { @MainActor [weak self] in
                 guard let self else {
@@ -1058,7 +1067,7 @@ private final class MagnifyingScrollView: NSScrollView {
                 }
 
                 scrollMode = nil
-                userAdjacentNavigationRequested?(settledDirection)
+                userAdjacentNavigationRequested?(navigationOffset)
             }
         }
     }

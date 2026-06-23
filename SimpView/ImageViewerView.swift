@@ -47,9 +47,9 @@ struct ImageViewerView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .overlay {
             if isDropTargeted {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.accentColor, lineWidth: 3)
-                    .padding(6)
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(Color.accentColor, lineWidth: 2)
+                    .padding(1)
                     .allowsHitTesting(false)
             }
         }
