@@ -29,6 +29,7 @@ jobs:
             -derivedDataPath build \
             ARCHS=arm64 \
             ONLY_ACTIVE_ARCH=YES \
+            MARKETING_VERSION="$BUILD_SUFFIX" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             build
