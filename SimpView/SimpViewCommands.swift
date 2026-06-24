@@ -6,6 +6,12 @@ struct SimpViewCommands: Commands {
     @ObservedObject private var windowManager = WindowManager.shared
 
     var body: some Commands {
+        CommandGroup(replacing: .appInfo) {
+            Button("About SimpView") {
+                AboutWindowController.shared.show()
+            }
+        }
+
         CommandGroup(replacing: .newItem) {
             Button {
                 windowManager.openImage()
