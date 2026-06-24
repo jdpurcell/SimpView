@@ -228,6 +228,16 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
+    func copyImageFile() {
+        guard let url = mostRecentWindowController?.imageDocument.fileURL else {
+            return
+        }
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.writeObjects([url as NSURL])
+    }
+
     func previousImage() {
         stopKeyboardNavigation()
         mostRecentWindowController?.previousImage()

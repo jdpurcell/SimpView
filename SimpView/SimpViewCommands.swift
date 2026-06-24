@@ -95,6 +95,22 @@ struct SimpViewCommands: Commands {
         CommandGroup(replacing: .saveItem) {
         }
 
+        CommandGroup(replacing: .undoRedo) {
+        }
+
+        CommandGroup(replacing: .pasteboard) {
+            Button {
+                windowManager.copyImageFile()
+            } label: {
+                Label("Copy", systemImage: "doc.on.doc")
+            }
+            .keyboardShortcut("c")
+            .disabled(windowManager.activeImageURL == nil)
+        }
+
+        CommandGroup(replacing: .textEditing) {
+        }
+
         CommandMenu("Go") {
             Button {
                 windowManager.previousImage()
@@ -203,6 +219,9 @@ struct SimpViewCommands: Commands {
             .disabled(!windowManager.activeCanZoom)
 
             Divider()
+        }
+
+        CommandGroup(replacing: .help) {
         }
     }
 }
