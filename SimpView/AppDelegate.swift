@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillResignActive(_ notification: Notification) {
+        WindowManager.shared.markFolderListingsDirty()
         WindowManager.shared.stopKeyboardNavigation()
     }
 

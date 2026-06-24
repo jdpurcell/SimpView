@@ -32,14 +32,21 @@ final class ImageDocument: ObservableObject {
     func open(
         resolvingURL: () async -> URL?,
         didResolveURL: (URL) -> Void = { _ in },
-        decode: ((URL) async -> CGImage?)? = nil
+        decode: ((URL) async -> CGImage?)? = nil,
+        showsLoadingIndicatorImmediately: Bool = false
     ) async -> OpenResult {
         let identifier = UUID()
         loadIdentifier = identifier
         isLoading = true
         isResolvingURL = true
-        isShowingLoadingIndicator = false
-        scheduleLoadingIndicator(for: identifier)
+        if showsLoadingIndicatorImmediately {
+            loadingIndicatorTask?.cancel()
+            loadingIndicatorTask = nil
+            isShowingLoadingIndicator = true
+        } else {
+            isShowingLoadingIndicator = false
+            scheduleLoadingIndicator(for: identifier)
+        }
 
         let resolvedURL = await resolvingURL()
 

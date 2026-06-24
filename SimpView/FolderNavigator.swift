@@ -28,18 +28,18 @@ final class FolderNavigator {
     private struct ActiveRefresh {
         let identifier: UUID
         let directoryURL: URL
+        let dirtyGeneration: Int
         let sortField: ImageSortField
         let sortDirection: SortDirection
         let task: Task<[Entry], Never>
     }
 
-    private static let refreshIdleInterval: TimeInterval = 2.5
-
     private var directoryURL: URL?
     private var entries: [Entry] = []
     private var fallbackEntry: Entry?
     private var activeRefresh: ActiveRefresh?
-    private var lastImageOpenDate: Date?
+    private var listingDirtyGeneration = 0
+    private var listingRefreshGeneration = -1
     private var sortField: ImageSortField
     private var sortDirection: SortDirection
     private var cancellables: Set<AnyCancellable> = []
@@ -78,6 +78,10 @@ final class FolderNavigator {
         startBackgroundRefresh(for: newDirectoryURL)
     }
 
+    func markListingDirty() {
+        listingDirtyGeneration += 1
+    }
+
     func adjacentURL(from currentURL: URL, offset: Int) async -> URL? {
         guard offset != 0 else {
             return nil
@@ -110,11 +114,6 @@ final class FolderNavigator {
     private func prepareForNavigation(from currentURL: URL) async -> URL {
         let normalizedURL = normalized(currentURL)
         let currentDirectoryURL = normalizedURL.deletingLastPathComponent()
-        let now = Date()
-        let hasBeenIdle =
-            lastImageOpenDate.map {
-                now.timeIntervalSince($0) >= Self.refreshIdleInterval
-            } ?? true
 
         let directoryChanged = directoryURL != currentDirectoryURL
         if directoryChanged {
@@ -127,7 +126,7 @@ final class FolderNavigator {
         let shouldRefresh =
             directoryChanged
             || activeRefresh?.directoryURL == currentDirectoryURL
-            || hasBeenIdle
+            || listingRefreshGeneration < listingDirtyGeneration
 
         if shouldRefresh {
             await refresh(for: currentDirectoryURL)
@@ -137,7 +136,6 @@ final class FolderNavigator {
     }
 
     func didOpen(_ url: URL) {
-        lastImageOpenDate = Date()
         let openedEntry = entry(for: normalized(url))
         fallbackEntry = openedEntry
 
@@ -202,13 +200,16 @@ final class FolderNavigator {
     }
 
     private func refresh(for directoryURL: URL) async {
-        let refresh = startRefresh(for: directoryURL)
-        let refreshedEntries = await refresh.task.value
-        apply(
-            refreshedEntries,
-            for: directoryURL,
-            refresh: refresh
-        )
+        repeat {
+            let refresh = startRefresh(for: directoryURL)
+            let refreshedEntries = await refresh.task.value
+            apply(
+                refreshedEntries,
+                for: directoryURL,
+                refresh: refresh
+            )
+        } while self.directoryURL == directoryURL
+            && listingRefreshGeneration < listingDirtyGeneration
     }
 
     private func startRefresh(for directoryURL: URL) -> ActiveRefresh {
@@ -231,6 +232,7 @@ final class FolderNavigator {
         let refresh = ActiveRefresh(
             identifier: identifier,
             directoryURL: directoryURL,
+            dirtyGeneration: listingDirtyGeneration,
             sortField: sortField,
             sortDirection: sortDirection,
             task: task
@@ -253,6 +255,10 @@ final class FolderNavigator {
         }
 
         activeRefresh = nil
+        listingRefreshGeneration = max(
+            listingRefreshGeneration,
+            refresh.dirtyGeneration
+        )
         var completeEntries = refreshedEntries
         var addedFallbackEntry = false
         let sortChanged =
@@ -298,19 +304,15 @@ final class FolderNavigator {
     }
 
     private func entry(for url: URL) -> Entry {
-        let values = try? url.resourceValues(
-            forKeys: [
-                .contentModificationDateKey,
-                .fileSizeKey,
-            ]
-        )
-
+        // Fallback entries keep the UI responsive while a real folder refresh
+        // gathers metadata off the main actor. Asking a network URL for file
+        // size or modification date here can block session restore before the
+        // loading indicator has a chance to appear.
         return Entry(
             url: url,
             name: url.lastPathComponent,
-            modificationDate:
-                values?.contentModificationDate ?? .distantPast,
-            fileSize: values?.fileSize ?? -1
+            modificationDate: .distantPast,
+            fileSize: -1
         )
     }
 
@@ -410,14 +412,10 @@ final class FolderNavigator {
     }
 
     nonisolated private static func normalized(_ url: URL) -> URL {
-        let standardizedURL = url.standardizedFileURL
-        let directoryURL = standardizedURL
-            .deletingLastPathComponent()
-            .resolvingSymlinksInPath()
-        return directoryURL.appendingPathComponent(
-            standardizedURL.lastPathComponent,
-            isDirectory: false
-        )
+        // Keep normalization lexical only. Resolving symlinks can touch the
+        // filesystem and block badly on slow network volumes, including during
+        // session restore before the loading UI has a chance to appear.
+        url.standardizedFileURL
     }
 
     private func normalized(_ url: URL) -> URL {

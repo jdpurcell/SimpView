@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct SimpViewCommands: Commands {
     @ObservedObject private var windowManager = WindowManager.shared
@@ -26,7 +27,11 @@ struct SimpViewCommands: Commands {
                         } icon: {
                             Image(
                                 nsImage: NSWorkspace.shared.icon(
-                                    forFile: url.path
+                                    for:
+                                        UTType(
+                                            filenameExtension:
+                                                url.pathExtension
+                                        ) ?? .image
                                 )
                             )
                         }

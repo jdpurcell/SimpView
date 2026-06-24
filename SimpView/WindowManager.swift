@@ -20,6 +20,8 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     private var hasKeyboardNavigationRepeated = false
     private var keyboardNavigationIdentifier = UUID()
     private var keyboardNavigationTask: Task<Void, Never>?
+    private var recentDocumentRefreshGeneration = 0
+    private var recentDocumentRefreshTask: Task<Void, Never>?
 
     var hasNoWindows: Bool {
         windowControllers.isEmpty
@@ -40,6 +42,12 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         keyboardNavigationController = nil
         hasKeyboardNavigationRepeated = false
         keyboardNavigationIdentifier = UUID()
+    }
+
+    func markFolderListingsDirty() {
+        for controller in windowControllers {
+            controller.markFolderListingDirty()
+        }
     }
 
     func saveSession() throws {
@@ -167,12 +175,37 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
 
     func clearRecentDocuments() {
         NSDocumentController.shared.clearRecentDocuments(nil)
+        recentDocumentURLs = []
         refreshRecentDocuments()
     }
 
     func refreshRecentDocuments() {
-        recentDocumentURLs =
-            NSDocumentController.shared.recentDocumentURLs
+        recentDocumentRefreshGeneration += 1
+        let generation = recentDocumentRefreshGeneration
+        recentDocumentRefreshTask?.cancel()
+        recentDocumentRefreshTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard
+                !Task.isCancelled,
+                let self
+            else {
+                return
+            }
+
+            let urls = NSDocumentController.shared.recentDocumentURLs
+
+            guard
+                !Task.isCancelled,
+                recentDocumentRefreshGeneration == generation
+            else {
+                return
+            }
+
+            if recentDocumentURLs != urls {
+                recentDocumentURLs = urls
+            }
+            recentDocumentRefreshTask = nil
+        }
     }
 
     func closeActiveWindow() {

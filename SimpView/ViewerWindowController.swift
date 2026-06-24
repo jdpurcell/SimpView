@@ -207,7 +207,8 @@ final class ViewerWindowController: NSWindowController {
 
             let didOpen = await performOpen(
                 resolvingURL: { url },
-                addToRecentDocuments: false
+                addToRecentDocuments: false,
+                showsLoadingIndicatorImmediately: true
             )
             guard didOpen else {
                 if !Task.isCancelled {
@@ -305,6 +306,10 @@ final class ViewerWindowController: NSWindowController {
         await openTask?.value
     }
 
+    func markFolderListingDirty() {
+        folderNavigator.markListingDirty()
+    }
+
     func setImagePreloadingSuspended(_ suspended: Bool) {
         guard isImagePreloadingSuspended != suspended else {
             return
@@ -316,7 +321,20 @@ final class ViewerWindowController: NSWindowController {
         }
     }
 
+    private var canStartNavigation: Bool {
+        // Once navigation has resolved a target image, fileURL already points
+        // at that provisional target. A second navigation can then intentionally
+        // skip past a slow decode. Before that, while the folder listing is
+        // still resolving the target, another navigation would only restart the
+        // same lookup from the same old image and reset the loading grace period.
+        !(imageDocument.isLoading && imageDocument.isResolvingURL)
+    }
+
     private func navigate(by offset: Int) {
+        guard canStartNavigation else {
+            return
+        }
+
         guard let currentURL = imageDocument.fileURL else {
             return
         }
@@ -330,6 +348,10 @@ final class ViewerWindowController: NSWindowController {
     }
 
     private func navigateToEndpoint(first: Bool) {
+        guard canStartNavigation else {
+            return
+        }
+
         guard let currentURL = imageDocument.fileURL else {
             return
         }
@@ -358,7 +380,8 @@ final class ViewerWindowController: NSWindowController {
     @discardableResult
     private func performOpen(
         resolvingURL: () async -> URL?,
-        addToRecentDocuments: Bool = true
+        addToRecentDocuments: Bool = true,
+        showsLoadingIndicatorImmediately: Bool = false
     ) async -> Bool {
         let result = await imageDocument.open(
             resolvingURL: resolvingURL,
@@ -368,7 +391,6 @@ final class ViewerWindowController: NSWindowController {
                 }
                 zoomPercentage = nil
                 updateWindowTitle(revealingBubble: true)
-                window?.representedURL = url
                 documentStateChanged?()
             },
             decode: { [imagePreloadCache] url in
@@ -379,7 +401,8 @@ final class ViewerWindowController: NSWindowController {
                 return await Task.detached(priority: .userInitiated) {
                     ImageDocument.decodeImage(at: url)
                 }.value
-            }
+            },
+            showsLoadingIndicatorImmediately: showsLoadingIndicatorImmediately
         )
         guard !Task.isCancelled else {
             return false
@@ -391,7 +414,6 @@ final class ViewerWindowController: NSWindowController {
             zoomPercentage = nil
             viewportController.prepareForNewImage()
             updateWindowTitle(revealingBubble: true)
-            window?.representedURL = url
             didOpenImage?(addToRecentDocuments)
             await waitForPresentation()
             updateImagePreloads()
@@ -401,7 +423,6 @@ final class ViewerWindowController: NSWindowController {
             zoomPercentage = nil
             viewportController.prepareForNewImage()
             updateWindowTitle(revealingBubble: true)
-            window?.representedURL = url
             didOpenImage?(false)
             await waitForPresentation()
             updateImagePreloads()
