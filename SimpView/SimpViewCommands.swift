@@ -88,6 +88,7 @@ struct SimpViewCommands: Commands {
             } label: {
                 Label("Show in Finder", systemImage: "finder")
             }
+            .keyboardShortcut(.return, modifiers: [.command])
             .disabled(windowManager.activeImageURL == nil)
         }
 
@@ -102,6 +103,15 @@ struct SimpViewCommands: Commands {
             }
             .keyboardShortcut(.leftArrow, modifiers: [])
             .disabled(windowManager.activeImageURL == nil)
+            .modifierKeyAlternate(.option) {
+                Button {
+                    windowManager.jumpBackImage()
+                } label: {
+                    Label("Jump Back", systemImage: "backward")
+                }
+                .keyboardShortcut(.leftArrow, modifiers: [.option])
+                .disabled(windowManager.activeImageURL == nil)
+            }
 
             Button {
                 windowManager.nextImage()
@@ -110,8 +120,15 @@ struct SimpViewCommands: Commands {
             }
             .keyboardShortcut(.rightArrow, modifiers: [])
             .disabled(windowManager.activeImageURL == nil)
-
-            Divider()
+            .modifierKeyAlternate(.option) {
+                Button {
+                    windowManager.jumpForwardImage()
+                } label: {
+                    Label("Jump Forward", systemImage: "forward")
+                }
+                .keyboardShortcut(.rightArrow, modifiers: [.option])
+                .disabled(windowManager.activeImageURL == nil)
+            }
 
             Button {
                 windowManager.firstImage()
@@ -127,6 +144,14 @@ struct SimpViewCommands: Commands {
                 Label("Last Image", systemImage: "forward.end")
             }
             .keyboardShortcut(.end, modifiers: [])
+            .disabled(windowManager.activeImageURL == nil)
+
+            Button {
+                windowManager.randomImage()
+            } label: {
+                Label("Random Image", systemImage: "shuffle")
+            }
+            .keyboardShortcut("r", modifiers: [])
             .disabled(windowManager.activeImageURL == nil)
         }
 

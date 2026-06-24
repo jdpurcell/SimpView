@@ -16,7 +16,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     private var windowControllers: [ViewerWindowController] = []
     private weak var lastFocusedWindowController: ViewerWindowController?
     private weak var keyboardNavigationController: ViewerWindowController?
-    private var keyboardNavigationDirection: Int?
+    private var keyboardNavigationCommand: ImageNavigationCommand?
     private var hasKeyboardNavigationRepeated = false
     private var keyboardNavigationIdentifier = UUID()
     private var keyboardNavigationTask: Task<Void, Never>?
@@ -38,7 +38,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
 
     func stopKeyboardNavigation() {
         // Invalidate the loop without interrupting an image already decoding.
-        keyboardNavigationDirection = nil
+        keyboardNavigationCommand = nil
         keyboardNavigationController = nil
         hasKeyboardNavigationRepeated = false
         keyboardNavigationIdentifier = UUID()
@@ -238,6 +238,16 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         mostRecentWindowController?.nextImage()
     }
 
+    func jumpBackImage() {
+        stopKeyboardNavigation()
+        mostRecentWindowController?.jumpBackImage()
+    }
+
+    func jumpForwardImage() {
+        stopKeyboardNavigation()
+        mostRecentWindowController?.jumpForwardImage()
+    }
+
     func firstImage() {
         stopKeyboardNavigation()
         mostRecentWindowController?.firstImage()
@@ -246,6 +256,11 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     func lastImage() {
         stopKeyboardNavigation()
         mostRecentWindowController?.lastImage()
+    }
+
+    func randomImage() {
+        stopKeyboardNavigation()
+        mostRecentWindowController?.randomImage()
     }
 
     func setZoomToFit(_ enabled: Bool) {
@@ -495,25 +510,22 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     private func handleKeyboardNavigationEvent(
         _ event: NSEvent
     ) -> Bool {
-        guard let direction = navigationDirection(for: event) else {
-            return false
-        }
-
         if event.type == .keyUp {
-            if keyboardNavigationDirection == direction {
+            if
+                let command = keyboardNavigationCommand,
+                keyCode(event.keyCode, matches: command)
+            {
                 stopKeyboardNavigation()
                 return true
             }
             return false
         }
 
-        let disallowedModifiers: NSEvent.ModifierFlags = [
-            .command,
-            .control,
-            .option,
-            .shift,
-        ]
-        guard event.modifierFlags.intersection(disallowedModifiers).isEmpty,
+        guard let command = navigationCommand(for: event) else {
+            return false
+        }
+
+        guard
             let controller = controller(for: NSApp.keyWindow),
             controller.imageDocument.fileURL != nil
         else {
@@ -527,24 +539,73 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         }
 
         stopKeyboardNavigation()
-        keyboardNavigationDirection = direction
+        keyboardNavigationCommand = command
         keyboardNavigationController = controller
-        if direction < 0 {
-            controller.previousImage()
-        } else {
-            controller.nextImage()
-        }
+        navigate(controller, command: command)
         return true
     }
 
-    private func navigationDirection(for event: NSEvent) -> Int? {
-        switch event.keyCode {
-        case 123:
-            -1
-        case 124:
-            1
+    private func navigationCommand(for event: NSEvent) -> ImageNavigationCommand? {
+        let modifiers = event.modifierFlags.intersection([
+            .command,
+            .control,
+            .option,
+            .shift,
+        ])
+
+        switch (event.keyCode, modifiers) {
+        case (123, []):
+            return .previous
+        case (124, []):
+            return .next
+        case (123, [.option]):
+            return .jumpBack
+        case (124, [.option]):
+            return .jumpForward
+        case (15, []):
+            return .random
         default:
-            nil
+            return nil
+        }
+    }
+
+    private func keyCode(
+        _ keyCode: UInt16,
+        matches command: ImageNavigationCommand
+    ) -> Bool {
+        switch command {
+        case .previous, .jumpBack:
+            return keyCode == 123
+        case .next, .jumpForward:
+            return keyCode == 124
+        case .random:
+            return keyCode == 15
+        case .first:
+            return keyCode == 115
+        case .last:
+            return keyCode == 119
+        }
+    }
+
+    private func navigate(
+        _ controller: ViewerWindowController,
+        command: ImageNavigationCommand
+    ) {
+        switch command {
+        case .previous:
+            controller.previousImage()
+        case .next:
+            controller.nextImage()
+        case .jumpBack:
+            controller.jumpBackImage()
+        case .jumpForward:
+            controller.jumpForwardImage()
+        case .first:
+            controller.firstImage()
+        case .last:
+            controller.lastImage()
+        case .random:
+            controller.randomImage()
         }
     }
 
@@ -564,7 +625,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
                 let controller = keyboardNavigationController
             else {
                 keyboardNavigationTask = nil
-                if keyboardNavigationDirection != nil,
+                if keyboardNavigationCommand != nil,
                     keyboardNavigationController != nil,
                     hasKeyboardNavigationRepeated
                 {
@@ -578,11 +639,9 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
             while
                 keyboardNavigationIdentifier == identifier,
                 keyboardNavigationController === controller,
-                let direction = keyboardNavigationDirection
+                let command = keyboardNavigationCommand
             {
-                let didNavigate = await controller.navigateByKeyboard(
-                    by: direction
-                )
+                let didNavigate = await controller.navigateByKeyboard(command)
 
                 guard
                     keyboardNavigationIdentifier == identifier,
@@ -592,23 +651,22 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
                 }
 
                 if !didNavigate {
-                    if keyboardNavigationDirection == direction {
+                    if keyboardNavigationCommand == command {
                         stopKeyboardNavigation()
                     }
                     continue
                 }
 
-                try? await Task.sleep(
-                    for: .milliseconds(
-                        AppPreferences.shared
-                            .navigationIntervalMilliseconds
-                    )
-                )
+                let interval = AppPreferences.shared
+                    .navigationIntervalMilliseconds
+                if interval > 0 {
+                    try? await Task.sleep(for: .milliseconds(interval))
+                }
             }
 
             keyboardNavigationTask = nil
             if keyboardNavigationIdentifier != identifier,
-                keyboardNavigationDirection != nil,
+                keyboardNavigationCommand != nil,
                 keyboardNavigationController != nil,
                 hasKeyboardNavigationRepeated
             {

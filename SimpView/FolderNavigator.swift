@@ -3,8 +3,24 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
+enum ImageNavigationCommand: Equatable {
+    case previous
+    case next
+    case jumpBack
+    case jumpForward
+    case first
+    case last
+    case random
+}
+
 @MainActor
 final class FolderNavigator {
+    enum NavigationTarget {
+        case relative(offset: Int, clampsToBounds: Bool)
+        case endpoint(first: Bool)
+        case random
+    }
+
     struct Position: Equatable {
         let index: Int
         let count: Int
@@ -82,33 +98,71 @@ final class FolderNavigator {
         listingDirtyGeneration += 1
     }
 
-    func adjacentURL(from currentURL: URL, offset: Int) async -> URL? {
-        guard offset != 0 else {
-            return nil
-        }
-
+    func navigationURL(
+        from currentURL: URL,
+        target: NavigationTarget
+    ) async -> URL? {
         let normalizedURL = await prepareForNavigation(from: currentURL)
         guard let currentIndex = entryIndex(for: normalizedURL) else {
             return nil
         }
 
-        let targetIndex = currentIndex + offset
-        guard entries.indices.contains(targetIndex) else {
-            return nil
-        }
+        switch target {
+        case .relative(let offset, let clampsToBounds):
+            guard offset != 0 else {
+                return nil
+            }
 
-        return entries[targetIndex].url
+            let targetIndex = currentIndex + offset
+            let resolvedIndex = clampsToBounds
+                ? min(max(targetIndex, entries.startIndex), entries.endIndex - 1)
+                : targetIndex
+            guard
+                entries.indices.contains(resolvedIndex),
+                resolvedIndex != currentIndex
+            else {
+                return nil
+            }
+
+            return entries[resolvedIndex].url
+
+        case .endpoint(let first):
+            let targetIndex = first ? entries.startIndex : entries.endIndex - 1
+            guard
+                entries.indices.contains(targetIndex),
+                targetIndex != currentIndex
+            else {
+                return nil
+            }
+
+            return entries[targetIndex].url
+
+        case .random:
+            guard entries.count > 1 else {
+                return nil
+            }
+
+            var targetIndex = Int.random(in: 0..<(entries.count - 1))
+            if targetIndex >= currentIndex {
+                targetIndex += 1
+            }
+
+            return entries[targetIndex].url
+        }
+    }
+
+    func adjacentURL(from currentURL: URL, offset: Int) async -> URL? {
+        await navigationURL(
+            from: currentURL,
+            target: .relative(offset: offset, clampsToBounds: false)
+        )
     }
 
     func endpointURL(from currentURL: URL, first: Bool) async -> URL? {
-        let normalizedURL = await prepareForNavigation(from: currentURL)
-        guard let targetURL = first ? entries.first?.url : entries.last?.url,
-            normalized(targetURL) != normalizedURL
-        else {
-            return nil
-        }
-
-        return targetURL
+        await navigationURL(
+            from: currentURL,
+            target: .endpoint(first: first)
+        )
     }
 
     private func prepareForNavigation(from currentURL: URL) async -> URL {

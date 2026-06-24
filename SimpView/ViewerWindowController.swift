@@ -72,7 +72,10 @@ final class ViewerWindowController: NSWindowController {
         }
         viewportController.adjacentNavigationRequested = {
             [weak self] offset in
-            self?.navigate(by: offset)
+            guard offset != 0 else {
+                return
+            }
+            self?.navigate(offset < 0 ? .previous : .next)
         }
         folderNavigator.listingChanged = { [weak self] in
             self?.updateWindowTitle()
@@ -274,30 +277,42 @@ final class ViewerWindowController: NSWindowController {
     }
 
     func previousImage() {
-        navigate(by: -1)
+        navigate(.previous)
     }
 
     func nextImage() {
-        navigate(by: 1)
+        navigate(.next)
+    }
+
+    func jumpBackImage() {
+        navigate(.jumpBack)
+    }
+
+    func jumpForwardImage() {
+        navigate(.jumpForward)
     }
 
     func firstImage() {
-        navigateToEndpoint(first: true)
+        navigate(.first)
     }
 
     func lastImage() {
-        navigateToEndpoint(first: false)
+        navigate(.last)
     }
 
-    func navigateByKeyboard(by offset: Int) async -> Bool {
+    func randomImage() {
+        navigate(.random)
+    }
+
+    func navigateByKeyboard(_ command: ImageNavigationCommand) async -> Bool {
         guard let currentURL = imageDocument.fileURL else {
             return false
         }
 
         return await performOpen { [folderNavigator] in
-            await folderNavigator.adjacentURL(
+            await folderNavigator.navigationURL(
                 from: currentURL,
-                offset: offset
+                target: Self.navigationTarget(for: command)
             )
         }
     }
@@ -330,7 +345,7 @@ final class ViewerWindowController: NSWindowController {
         !(imageDocument.isLoading && imageDocument.isResolvingURL)
     }
 
-    private func navigate(by offset: Int) {
+    private func navigate(_ command: ImageNavigationCommand) {
         guard canStartNavigation else {
             return
         }
@@ -340,27 +355,37 @@ final class ViewerWindowController: NSWindowController {
         }
 
         open { [folderNavigator] in
-            await folderNavigator.adjacentURL(
+            await folderNavigator.navigationURL(
                 from: currentURL,
-                offset: offset
+                target: Self.navigationTarget(for: command)
             )
         }
     }
 
-    private func navigateToEndpoint(first: Bool) {
-        guard canStartNavigation else {
-            return
-        }
-
-        guard let currentURL = imageDocument.fileURL else {
-            return
-        }
-
-        open { [folderNavigator] in
-            await folderNavigator.endpointURL(
-                from: currentURL,
-                first: first
+    private static func navigationTarget(
+        for command: ImageNavigationCommand
+    ) -> FolderNavigator.NavigationTarget {
+        switch command {
+        case .previous:
+            return .relative(offset: -1, clampsToBounds: false)
+        case .next:
+            return .relative(offset: 1, clampsToBounds: false)
+        case .jumpBack:
+            return .relative(
+                offset: -AppPreferences.shared.navigationJumpDistance,
+                clampsToBounds: true
             )
+        case .jumpForward:
+            return .relative(
+                offset: AppPreferences.shared.navigationJumpDistance,
+                clampsToBounds: true
+            )
+        case .first:
+            return .endpoint(first: true)
+        case .last:
+            return .endpoint(first: false)
+        case .random:
+            return .random
         }
     }
 

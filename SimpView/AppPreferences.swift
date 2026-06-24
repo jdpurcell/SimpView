@@ -24,6 +24,7 @@ final class AppPreferences: NSObject, ObservableObject {
     @Published private(set) var imageSortField: ImageSortField
     @Published private(set) var imageSortDirection: SortDirection
     @Published private(set) var navigationIntervalMilliseconds: Int
+    @Published private(set) var navigationJumpDistance: Int
     @Published private(set) var preloadAdjacentImages: Bool
     @Published private(set) var sessionQuitBehavior: SessionQuitBehavior
     @Published private(set) var quitOnLastWindowClosed: Bool
@@ -38,14 +39,21 @@ final class AppPreferences: NSObject, ObservableObject {
         static let imageSortField = "imageSortField"
         static let imageSortDirection = "imageSortDirection"
         static let navigationInterval = "navigationInterval"
+        static let navigationJumpDistance = "navigationJumpDistance"
         static let preloadAdjacentImages = "preloadAdjacentImages"
         static let sessionQuitBehavior = "sessionQuitBehavior"
         static let quitOnLastWindowClosed = "quitOnLastWindowClosed"
         static let hideTitleBar = "hideTitleBar"
     }
 
-    private static let defaultZoomStepPercent = 25
-    private static let defaultNavigationIntervalMilliseconds = 80
+    nonisolated static let defaultZoomStepPercent = 25
+    nonisolated static let zoomStepPercentRange = 1...100
+    nonisolated static let defaultNavigationIntervalMilliseconds = 80
+    nonisolated static let navigationIntervalMillisecondsRange = 0...500
+    nonisolated static let navigationIntervalMillisecondsStep = 10
+    nonisolated static let defaultNavigationJumpDistance = 50
+    nonisolated static let navigationJumpDistanceRange = 25...250
+    nonisolated static let navigationJumpDistanceStep = 25
 
     private let defaults: UserDefaults
 
@@ -60,6 +68,7 @@ final class AppPreferences: NSObject, ObservableObject {
         imageSortDirection = Self.readImageSortDirection(from: defaults)
         navigationIntervalMilliseconds =
             Self.readNavigationIntervalMilliseconds(from: defaults)
+        navigationJumpDistance = Self.readNavigationJumpDistance(from: defaults)
         preloadAdjacentImages = Self.readBool(
             Key.preloadAdjacentImages,
             defaultValue: true,
@@ -110,6 +119,12 @@ final class AppPreferences: NSObject, ObservableObject {
             navigationIntervalMilliseconds = newNavigationInterval
         }
 
+        let newNavigationJumpDistance =
+            Self.readNavigationJumpDistance(from: defaults)
+        if navigationJumpDistance != newNavigationJumpDistance {
+            navigationJumpDistance = newNavigationJumpDistance
+        }
+
         let newPreloadAdjacentImages = Self.readBool(
             Key.preloadAdjacentImages,
             defaultValue: true,
@@ -146,20 +161,26 @@ final class AppPreferences: NSObject, ObservableObject {
     }
 
     func setZoomStepPercent(_ value: Int) {
-        guard value > 0 else {
-            return
-        }
-
-        defaults.set(value, forKey: Key.zoomStep)
+        defaults.set(
+            Self.normalizedZoomStepPercent(value),
+            forKey: Key.zoomStep
+        )
         refresh()
     }
 
     func setNavigationIntervalMilliseconds(_ value: Int) {
-        guard value > 0 else {
-            return
-        }
+        defaults.set(
+            Self.normalizedNavigationIntervalMilliseconds(value),
+            forKey: Key.navigationInterval
+        )
+        refresh()
+    }
 
-        defaults.set(value, forKey: Key.navigationInterval)
+    func setNavigationJumpDistance(_ value: Int) {
+        defaults.set(
+            Self.normalizedNavigationJumpDistance(value),
+            forKey: Key.navigationJumpDistance
+        )
         refresh()
     }
 
@@ -205,7 +226,14 @@ final class AppPreferences: NSObject, ObservableObject {
             return defaultZoomStepPercent
         }
 
-        return value.intValue
+        return normalizedZoomStepPercent(value.intValue)
+    }
+
+    private static func normalizedZoomStepPercent(_ value: Int) -> Int {
+        min(
+            max(value, zoomStepPercentRange.lowerBound),
+            zoomStepPercentRange.upperBound
+        )
     }
 
     private static func readImageSortField(
@@ -241,12 +269,42 @@ final class AppPreferences: NSObject, ObservableObject {
             let value = defaults.object(
                 forKey: Key.navigationInterval
             ) as? NSNumber,
-            value.intValue > 0
+            value.intValue >= 0
         else {
             return defaultNavigationIntervalMilliseconds
         }
 
-        return value.intValue
+        return normalizedNavigationIntervalMilliseconds(value.intValue)
+    }
+
+    private static func normalizedNavigationIntervalMilliseconds(
+        _ value: Int
+    ) -> Int {
+        min(
+            max(value, navigationIntervalMillisecondsRange.lowerBound),
+            navigationIntervalMillisecondsRange.upperBound
+        )
+    }
+
+    private static func readNavigationJumpDistance(
+        from defaults: UserDefaults
+    ) -> Int {
+        guard
+            let value = defaults.object(
+                forKey: Key.navigationJumpDistance
+            ) as? NSNumber
+        else {
+            return defaultNavigationJumpDistance
+        }
+
+        return normalizedNavigationJumpDistance(value.intValue)
+    }
+
+    private static func normalizedNavigationJumpDistance(_ value: Int) -> Int {
+        min(
+            max(value, navigationJumpDistanceRange.lowerBound),
+            navigationJumpDistanceRange.upperBound
+        )
     }
 
     private static func readSessionQuitBehavior(

@@ -15,7 +15,7 @@ struct SettingsView: View {
                         Stepper(
                             "Zoom step",
                             value: zoomStep,
-                            in: 1...100
+                            in: AppPreferences.zoomStepPercentRange
                         )
                         .labelsHidden()
                     }
@@ -62,8 +62,26 @@ struct SettingsView: View {
                         Stepper(
                             "Navigation speed",
                             value: navigationInterval,
-                            in: 10...500,
-                            step: 10
+                            in: AppPreferences
+                                .navigationIntervalMillisecondsRange,
+                            step: AppPreferences
+                                .navigationIntervalMillisecondsStep
+                        )
+                        .labelsHidden()
+                    }
+                }
+
+                LabeledContent("Jump distance") {
+                    HStack(spacing: 8) {
+                        Text("\(preferences.navigationJumpDistance)")
+                            .monospacedDigit()
+                            .frame(minWidth: 48, alignment: .trailing)
+
+                        Stepper(
+                            "Jump distance",
+                            value: navigationJumpDistance,
+                            in: AppPreferences.navigationJumpDistanceRange,
+                            step: AppPreferences.navigationJumpDistanceStep
                         )
                         .labelsHidden()
                     }
@@ -132,6 +150,13 @@ struct SettingsView: View {
             set: {
                 preferences.setNavigationIntervalMilliseconds($0)
             }
+        )
+    }
+
+    private var navigationJumpDistance: Binding<Int> {
+        Binding(
+            get: { preferences.navigationJumpDistance },
+            set: { preferences.setNavigationJumpDistance($0) }
         )
     }
 
