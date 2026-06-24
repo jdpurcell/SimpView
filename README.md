@@ -14,6 +14,7 @@ It's built for fast, keyboard/gesture-friendly browsing.
 - Multi-window workflow with recent files, Show in Finder, and session restore support.
 - Mouse gestures: Precise scroll to zoom, pinch to zoom, sideways swipe to navigate, middle click for Zoom to Fit, ⌘ middle click for Zoom to Fill.
 - Simple built-in preferences for sort order, navigation speed (when holding down arrow keys), jump distance, title bar hiding, etc.
+- Signed and notarized, so it opens normally without Gatekeeper workarounds.
 - Lightweight and minimal. No buttons/toolbars in the viewer, no image thumbnail browser, no editing, no animation support, no metadata viewing, etc. If you need those, look elsewhere.
 
 ## Supported Platforms
