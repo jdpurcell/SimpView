@@ -8,12 +8,12 @@ It's built for fast, keyboard/gesture-friendly browsing.
 
 ## Features
 
-- Fast folder-based browsing with arrow-key navigation, jump navigation (e.g. skip forward/back 50 images via ⌥→/⌥←), and random image navigation.
-- Flexible zoom options including Zoom to Fit, Zoom to Fill, Actual Size, and Zoom In/Out with customizable step.
+- Fast folder-based browsing with arrow-key navigation, jump navigation (e.g. skip forward/back 50 images with ⌥→/⌥←), and random image navigation.
+- Zoom controls: Zoom to Fit, Zoom to Fill, Actual Size, and Zoom In/Out with customizable step.
 - Adjacent-image preloading (optional).
 - Multi-window workflow with recent files, Show in Finder, and session restore support.
-- Mouse gestures: Precise scroll to zoom, pinch to zoom, sideways swipe to navigate, middle click for Zoom to Fit, ⌘ middle click for Zoom to Fill.
-- Simple built-in preferences for sort order, navigation speed (when holding down arrow keys), jump distance, title bar hiding, etc.
+- Trackpad/mouse controls: Scroll to zoom, pinch to zoom, left drag to pan, ⌘ scroll to pan, sideways swipe to navigate, middle click for Zoom to Fit, ⌘ middle click for Zoom to Fill.
+- Preferences for sort order, navigation speed (when holding down arrow keys), jump distance, title bar hiding, etc.
 - Signed and notarized, so it opens normally without Gatekeeper workarounds.
 - Lightweight and minimal. No buttons/toolbars in the viewer, no image thumbnail browser, no editing, no animation support, no metadata viewing, etc. If you need those, look elsewhere.
 

@@ -3,6 +3,8 @@ import AppKit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var isSystemTermination = false
+    private var didFinishLaunching = false
+    private var pendingLaunchURLs: [URL] = []
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSWindow.allowsAutomaticWindowTabbing = false
@@ -16,7 +18,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let restoredSession = WindowManager.shared.restoreSavedSession()
+        didFinishLaunching = true
         DispatchQueue.main.async {
+            if self.openPendingLaunchURLs() {
+                return
+            }
+
             if !restoredSession, WindowManager.shared.hasNoWindows {
                 WindowManager.shared.newWindow()
             }
@@ -83,9 +90,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
+        guard didFinishLaunching else {
+            pendingLaunchURLs.append(contentsOf: urls)
+            return
+        }
+
         for url in urls {
             WindowManager.shared.newWindow(opening: url)
         }
+    }
+
+    @discardableResult
+    private func openPendingLaunchURLs() -> Bool {
+        guard !pendingLaunchURLs.isEmpty else {
+            return false
+        }
+
+        let urls = pendingLaunchURLs
+        pendingLaunchURLs = []
+        for url in urls {
+            WindowManager.shared.newWindow(opening: url)
+        }
+        return true
     }
 
     func applicationShouldHandleReopen(
