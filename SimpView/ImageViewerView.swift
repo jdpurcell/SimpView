@@ -21,7 +21,8 @@ struct ImageViewerView: View {
             } else if let image = document.image {
                 ImageViewport(
                     image: image,
-                    controller: viewportController
+                    controller: viewportController,
+                    dynamicRange: preferences.imageDynamicRange
                 )
                 .accessibilityLabel(document.displayName)
             } else if document.hasDecodeError {

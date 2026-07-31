@@ -41,6 +41,19 @@ struct SettingsView: View {
                     .labelsHidden()
                     .frame(width: 160)
                 }
+
+                LabeledContent("Dynamic Range") {
+                    Picker("Dynamic Range", selection: imageDynamicRange) {
+                        Text("Standard")
+                            .tag(ImageDynamicRange.standard)
+                        Text("Constrained High")
+                            .tag(ImageDynamicRange.constrainedHigh)
+                        Text("High")
+                            .tag(ImageDynamicRange.high)
+                    }
+                    .labelsHidden()
+                    .frame(width: 160)
+                }
             } header: {
                 Text("Images")
             }
@@ -141,6 +154,13 @@ struct SettingsView: View {
         Binding(
             get: { preferences.imageSortDirection },
             set: { preferences.setImageSortDirection($0) }
+        )
+    }
+
+    private var imageDynamicRange: Binding<ImageDynamicRange> {
+        Binding(
+            get: { preferences.imageDynamicRange },
+            set: { preferences.setImageDynamicRange($0) }
         )
     }
 

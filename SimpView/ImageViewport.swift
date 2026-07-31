@@ -113,15 +113,18 @@ final class ImageViewportController {
 struct ImageViewport: NSViewRepresentable {
     let image: NSImage
     let controller: ImageViewportController
+    let dynamicRange: ImageDynamicRange
 
     func makeNSView(context: Context) -> ZoomableImageView {
         let viewport = ZoomableImageView()
+        viewport.dynamicRange = dynamicRange
         viewport.image = image
         controller.attach(viewport)
         return viewport
     }
 
     func updateNSView(_ viewport: ZoomableImageView, context: Context) {
+        viewport.dynamicRange = dynamicRange
         if viewport.image !== image {
             viewport.image = image
         }
@@ -151,6 +154,15 @@ final class ZoomableImageView: NSView {
     var zoomModeChanged: ((ViewportZoomMode) -> Void)?
     var adjacentNavigationRequested: ((Int) -> Void)?
     weak var controller: ImageViewportController?
+
+    var dynamicRange = AppPreferences.defaultImageDynamicRange {
+        didSet {
+            guard oldValue != dynamicRange else {
+                return
+            }
+            imageView.preferredImageDynamicRange = dynamicRange.appKitValue
+        }
+    }
 
     var image: NSImage? {
         didSet {
@@ -185,6 +197,7 @@ final class ZoomableImageView: NSView {
 
         imageView.imageAlignment = .alignCenter
         imageView.imageScaling = .scaleNone
+        imageView.preferredImageDynamicRange = dynamicRange.appKitValue
 
         scrollView.allowsMagnification = true
         scrollView.minMagnification = 0.01
@@ -668,6 +681,19 @@ final class ZoomableImageView: NSView {
         clipView.areConstraintsEnabled = false
         clipView.areConstraintsEnabled = restoreConstraints
         scrollView.reflectScrolledClipView(clipView)
+    }
+}
+
+private extension ImageDynamicRange {
+    var appKitValue: NSImage.DynamicRange {
+        switch self {
+        case .standard:
+            .standard
+        case .constrainedHigh:
+            .constrainedHigh
+        case .high:
+            .high
+        }
     }
 }
 

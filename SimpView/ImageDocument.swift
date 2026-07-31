@@ -25,14 +25,10 @@ final class ImageDocument: ObservableObject {
         fileURL?.lastPathComponent ?? "SimpView"
     }
 
-    func open(_ url: URL) async -> OpenResult {
-        await open(resolvingURL: { url })
-    }
-
     func open(
         resolvingURL: () async -> URL?,
         didResolveURL: (URL) -> Void = { _ in },
-        decode: ((URL) async -> CGImage?)? = nil,
+        decode: (URL) async -> CGImage?,
         showsLoadingIndicatorImmediately: Bool = false
     ) async -> OpenResult {
         let identifier = UUID()
@@ -64,14 +60,7 @@ final class ImageDocument: ObservableObject {
         hasDecodeError = false
         didResolveURL(url)
 
-        let decodedImage: CGImage?
-        if let decode {
-            decodedImage = await decode(url)
-        } else {
-            decodedImage = await Task.detached(priority: .userInitiated) {
-                Self.decodeImage(at: url)
-            }.value
-        }
+        let decodedImage = await decode(url)
 
         guard loadIdentifier == identifier else {
             return .superseded
@@ -131,7 +120,10 @@ final class ImageDocument: ObservableObject {
         isShowingLoadingIndicator = false
     }
 
-    nonisolated static func decodeImage(at url: URL) -> CGImage? {
+    nonisolated static func decodeImage(
+        at url: URL,
+        mode: ImageDecodeMode
+    ) -> CGImage? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
             return nil
         }
@@ -141,28 +133,34 @@ final class ImageDocument: ObservableObject {
         let width = properties?[kCGImagePropertyPixelWidth] as? Int ?? 0
         let height = properties?[kCGImagePropertyPixelHeight] as? Int ?? 0
         let maximumDimension = max(width, height)
+        var commonOptions: [CFString: Any] = [
+            kCGImageSourceShouldCacheImmediately: true,
+        ]
+        if mode == .hdr {
+            commonOptions[kCGImageSourceDecodeRequest] =
+                kCGImageSourceDecodeToHDR
+        }
 
         if maximumDimension > 0 {
-            let options: [CFString: Any] = [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: maximumDimension,
-                kCGImageSourceShouldCacheImmediately: true,
-            ]
+            var thumbnailOptions = commonOptions
+            thumbnailOptions[kCGImageSourceCreateThumbnailFromImageAlways] = true
+            thumbnailOptions[kCGImageSourceCreateThumbnailWithTransform] = true
+            thumbnailOptions[kCGImageSourceThumbnailMaxPixelSize] =
+                maximumDimension
 
             if let image = CGImageSourceCreateThumbnailAtIndex(
                 source,
                 0,
-                options as CFDictionary
+                thumbnailOptions as CFDictionary
             ) {
                 return image
             }
         }
 
-        let options: [CFString: Any] = [
-            kCGImageSourceShouldCache: true,
-            kCGImageSourceShouldCacheImmediately: true,
-        ]
-        return CGImageSourceCreateImageAtIndex(source, 0, options as CFDictionary)
+        return CGImageSourceCreateImageAtIndex(
+            source,
+            0,
+            commonOptions as CFDictionary
+        )
     }
 }

@@ -18,8 +18,13 @@ actor ImagePreloadCache {
     private var adjacentURLs: Set<URL> = []
     private var foregroundLoadCounts: [URL: Int] = [:]
     private var isEnabled = true
+    private var decodeMode: ImageDecodeMode?
 
-    func image(at url: URL) async -> CGImage? {
+    func image(
+        at url: URL,
+        mode: ImageDecodeMode
+    ) async -> CGImage? {
+        setDecodeMode(mode)
         foregroundLoadCounts[url, default: 0] += 1
         defer {
             finishForegroundLoad(at: url)
@@ -31,20 +36,21 @@ actor ImagePreloadCache {
 
         while isRetained(url) {
             let version = await Self.fileVersion(for: url)
-            guard isRetained(url) else {
+            guard decodeMode == mode, isRetained(url) else {
                 return nil
             }
 
             let image = await load(
                 url,
-                version: version
+                version: version,
+                mode: mode
             ).value
-            guard isRetained(url) else {
+            guard decodeMode == mode, isRetained(url) else {
                 return nil
             }
 
             let currentVersion = await Self.fileVersion(for: url)
-            if currentVersion == version {
+            if decodeMode == mode, currentVersion == version {
                 return image
             }
         }
@@ -54,8 +60,10 @@ actor ImagePreloadCache {
 
     func updateNeighborhood(
         currentURL: URL,
-        adjacentImages: [FolderNavigator.ImageReference]
+        adjacentImages: [FolderNavigator.ImageReference],
+        mode: ImageDecodeMode
     ) {
+        setDecodeMode(mode)
         guard isEnabled else {
             return
         }
@@ -74,9 +82,19 @@ actor ImagePreloadCache {
                 version: FileVersion(
                     modificationDate: image.modificationDate,
                     fileSize: image.fileSize
-                )
+                ),
+                mode: mode
             )
         }
+    }
+
+    func setDecodeMode(_ mode: ImageDecodeMode) {
+        guard decodeMode != mode else {
+            return
+        }
+
+        decodeMode = mode
+        evict(Array(loads.keys))
     }
 
     func setEnabled(_ enabled: Bool) {
@@ -109,7 +127,8 @@ actor ImagePreloadCache {
 
     private func load(
         _ url: URL,
-        version: FileVersion
+        version: FileVersion,
+        mode: ImageDecodeMode
     ) -> Task<CGImage?, Never> {
         if let existing = loads[url] {
             if existing.version == version {
@@ -124,7 +143,7 @@ actor ImagePreloadCache {
             guard !Task.isCancelled else {
                 return nil
             }
-            return ImageDocument.decodeImage(at: url)
+            return ImageDocument.decodeImage(at: url, mode: mode)
         }
         loads[url] = Load(
             version: version,

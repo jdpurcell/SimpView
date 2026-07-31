@@ -23,6 +23,8 @@ final class ViewerWindowController: NSWindowController {
     private var isHoveringWindowButtons = false
     private var frameBeforeFullScreen: NSRect?
     private var isImagePreloadingSuspended = false
+    private var displayedImageDecodeMode: ImageDecodeMode?
+    private var pendingImageDecodeMode: ImageDecodeMode?
 
     init() {
         super.init(window: nil)
@@ -117,6 +119,14 @@ final class ViewerWindowController: NSWindowController {
                         self.updateImagePreloads()
                     }
                 }
+            }
+            .store(in: &cancellables)
+        AppPreferences.shared.$imageDynamicRange
+            .map(\.decodeMode)
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] mode in
+                self?.imageDecodeModeDidChange(to: mode)
             }
             .store(in: &cancellables)
         NotificationCenter.default.publisher(
@@ -408,6 +418,7 @@ final class ViewerWindowController: NSWindowController {
         addToRecentDocuments: Bool = true,
         showsLoadingIndicatorImmediately: Bool = false
     ) async -> Bool {
+        let decodeMode = AppPreferences.shared.imageDynamicRange.decodeMode
         let result = await imageDocument.open(
             resolvingURL: resolvingURL,
             didResolveURL: { [weak self] url in
@@ -418,14 +429,8 @@ final class ViewerWindowController: NSWindowController {
                 updateWindowTitle(revealingBubble: true)
                 documentStateChanged?()
             },
-            decode: { [imagePreloadCache] url in
-                if AppPreferences.shared.preloadAdjacentImages {
-                    return await imagePreloadCache.image(at: url)
-                }
-
-                return await Task.detached(priority: .userInitiated) {
-                    ImageDocument.decodeImage(at: url)
-                }.value
+            decode: { [weak self] url in
+                await self?.decodeImage(at: url, mode: decodeMode)
             },
             showsLoadingIndicatorImmediately: showsLoadingIndicatorImmediately
         )
@@ -435,6 +440,7 @@ final class ViewerWindowController: NSWindowController {
 
         switch result {
         case .opened(let url):
+            displayedImageDecodeMode = decodeMode
             folderNavigator.didOpen(url)
             zoomPercentage = nil
             viewportController.prepareForNewImage()
@@ -442,8 +448,10 @@ final class ViewerWindowController: NSWindowController {
             didOpenImage?(addToRecentDocuments)
             await waitForPresentation()
             updateImagePreloads()
+            schedulePendingImageDecodeModeReload()
             return true
         case .failed(let url):
+            displayedImageDecodeMode = decodeMode
             folderNavigator.didOpen(url)
             zoomPercentage = nil
             viewportController.prepareForNewImage()
@@ -451,9 +459,152 @@ final class ViewerWindowController: NSWindowController {
             didOpenImage?(false)
             await waitForPresentation()
             updateImagePreloads()
+            schedulePendingImageDecodeModeReload()
             return true
-        case .unchanged, .superseded:
+        case .unchanged:
+            schedulePendingImageDecodeModeReload()
             return false
+        case .superseded:
+            return false
+        }
+    }
+
+    private func decodeImage(
+        at url: URL,
+        mode: ImageDecodeMode
+    ) async -> CGImage? {
+        if AppPreferences.shared.preloadAdjacentImages {
+            return await imagePreloadCache.image(at: url, mode: mode)
+        }
+
+        return await Task.detached(priority: .userInitiated) {
+            ImageDocument.decodeImage(at: url, mode: mode)
+        }.value
+    }
+
+    private func imageDecodeModeDidChange(to mode: ImageDecodeMode) {
+        pendingImageDecodeMode = mode
+
+        guard !imageDocument.isLoading else {
+            return
+        }
+
+        beginPendingImageDecodeModeReload()
+    }
+
+    private func schedulePendingImageDecodeModeReload() {
+        guard pendingImageDecodeMode != nil else {
+            return
+        }
+
+        Task { [weak self] in
+            await Task.yield()
+            self?.beginPendingImageDecodeModeReload()
+        }
+    }
+
+    private func beginPendingImageDecodeModeReload() {
+        guard
+            !imageDocument.isLoading,
+            let mode = pendingImageDecodeMode
+        else {
+            return
+        }
+
+        pendingImageDecodeMode = nil
+
+        guard displayedImageDecodeMode != mode else {
+            Task { [weak self] in
+                guard
+                    let self,
+                    AppPreferences.shared.imageDynamicRange.decodeMode == mode
+                else {
+                    return
+                }
+                await self.imagePreloadCache.setDecodeMode(mode)
+                guard
+                    AppPreferences.shared.imageDynamicRange.decodeMode == mode
+                else {
+                    return
+                }
+                self.updateImagePreloads()
+            }
+            return
+        }
+
+        guard let url = imageDocument.fileURL else {
+            Task {
+                guard
+                    AppPreferences.shared.imageDynamicRange.decodeMode == mode
+                else {
+                    return
+                }
+                await imagePreloadCache.setDecodeMode(mode)
+            }
+            return
+        }
+
+        let viewportState = imageDocument.image == nil
+            ? nil
+            : viewportController.captureSessionState()
+
+        openTask?.cancel()
+        openTask = Task { [weak self] in
+            await self?.reloadImage(
+                at: url,
+                mode: mode,
+                viewportState: viewportState
+            )
+        }
+    }
+
+    private func reloadImage(
+        at url: URL,
+        mode: ImageDecodeMode,
+        viewportState: ViewportSessionState?
+    ) async {
+        guard
+            !Task.isCancelled,
+            AppPreferences.shared.imageDynamicRange.decodeMode == mode
+        else {
+            return
+        }
+
+        await imagePreloadCache.setDecodeMode(mode)
+        guard
+            !Task.isCancelled,
+            AppPreferences.shared.imageDynamicRange.decodeMode == mode
+        else {
+            return
+        }
+
+        let result = await imageDocument.open(
+            resolvingURL: { url },
+            decode: { [weak self] url in
+                await self?.decodeImage(at: url, mode: mode)
+            }
+        )
+        guard !Task.isCancelled else {
+            return
+        }
+
+        switch result {
+        case .opened:
+            displayedImageDecodeMode = mode
+            await waitForPresentation()
+            if let viewportState {
+                viewportController.restoreSessionState(viewportState)
+            }
+            updateWindowTitle(revealingBubble: true)
+            updateImagePreloads()
+            schedulePendingImageDecodeModeReload()
+        case .failed:
+            displayedImageDecodeMode = mode
+            updateWindowTitle(revealingBubble: true)
+            updateImagePreloads()
+            schedulePendingImageDecodeModeReload()
+        case .unchanged, .superseded:
+            break
         }
     }
 
@@ -473,6 +624,8 @@ final class ViewerWindowController: NSWindowController {
     func closeImage() {
         openTask?.cancel()
         pendingRestoredWindowState = nil
+        displayedImageDecodeMode = nil
+        pendingImageDecodeMode = nil
         imageDocument.close()
         Task {
             await self.imagePreloadCache.removeAll()
@@ -495,7 +648,8 @@ final class ViewerWindowController: NSWindowController {
         Task {
             await imagePreloadCache.updateNeighborhood(
                 currentURL: currentURL,
-                adjacentImages: adjacentImages
+                adjacentImages: adjacentImages,
+                mode: AppPreferences.shared.imageDynamicRange.decodeMode
             )
         }
     }

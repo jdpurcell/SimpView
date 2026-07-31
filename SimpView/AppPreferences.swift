@@ -11,6 +11,21 @@ enum SortDirection: String, Hashable, Sendable {
     case descending
 }
 
+enum ImageDynamicRange: String, Hashable, Sendable {
+    case standard
+    case constrainedHigh
+    case high
+
+    var decodeMode: ImageDecodeMode {
+        self == .standard ? .standard : .hdr
+    }
+}
+
+enum ImageDecodeMode: Hashable, Sendable {
+    case standard
+    case hdr
+}
+
 enum SessionQuitBehavior: String, Hashable, Sendable {
     case followSystemSetting
     case askWhenQuitting
@@ -23,6 +38,7 @@ final class AppPreferences: NSObject, ObservableObject {
     @Published private(set) var zoomStepPercent: Int
     @Published private(set) var imageSortField: ImageSortField
     @Published private(set) var imageSortDirection: SortDirection
+    @Published private(set) var imageDynamicRange: ImageDynamicRange
     @Published private(set) var navigationIntervalMilliseconds: Int
     @Published private(set) var navigationJumpDistance: Int
     @Published private(set) var preloadAdjacentImages: Bool
@@ -38,6 +54,7 @@ final class AppPreferences: NSObject, ObservableObject {
         static let zoomStep = "zoomStep"
         static let imageSortField = "imageSortField"
         static let imageSortDirection = "imageSortDirection"
+        static let imageDynamicRange = "imageDynamicRange"
         static let navigationInterval = "navigationInterval"
         static let navigationJumpDistance = "navigationJumpDistance"
         static let preloadAdjacentImages = "preloadAdjacentImages"
@@ -48,6 +65,8 @@ final class AppPreferences: NSObject, ObservableObject {
 
     nonisolated static let defaultZoomStepPercent = 25
     nonisolated static let zoomStepPercentRange = 1...100
+    nonisolated static let defaultImageDynamicRange:
+        ImageDynamicRange = .constrainedHigh
     nonisolated static let defaultNavigationIntervalMilliseconds = 80
     nonisolated static let navigationIntervalMillisecondsRange = 0...500
     nonisolated static let navigationIntervalMillisecondsStep = 10
@@ -66,6 +85,7 @@ final class AppPreferences: NSObject, ObservableObject {
         zoomStepPercent = Self.readZoomStepPercent(from: defaults)
         imageSortField = Self.readImageSortField(from: defaults)
         imageSortDirection = Self.readImageSortDirection(from: defaults)
+        imageDynamicRange = Self.readImageDynamicRange(from: defaults)
         navigationIntervalMilliseconds =
             Self.readNavigationIntervalMilliseconds(from: defaults)
         navigationJumpDistance = Self.readNavigationJumpDistance(from: defaults)
@@ -111,6 +131,11 @@ final class AppPreferences: NSObject, ObservableObject {
         let newImageSortDirection = Self.readImageSortDirection(from: defaults)
         if imageSortDirection != newImageSortDirection {
             imageSortDirection = newImageSortDirection
+        }
+
+        let newImageDynamicRange = Self.readImageDynamicRange(from: defaults)
+        if imageDynamicRange != newImageDynamicRange {
+            imageDynamicRange = newImageDynamicRange
         }
 
         let newNavigationInterval =
@@ -199,6 +224,11 @@ final class AppPreferences: NSObject, ObservableObject {
         refresh()
     }
 
+    func setImageDynamicRange(_ value: ImageDynamicRange) {
+        defaults.set(value.rawValue, forKey: Key.imageDynamicRange)
+        refresh()
+    }
+
     func setSessionQuitBehavior(_ value: SessionQuitBehavior) {
         defaults.set(value.rawValue, forKey: Key.sessionQuitBehavior)
         refresh()
@@ -260,6 +290,19 @@ final class AppPreferences: NSObject, ObservableObject {
         }
 
         return direction
+    }
+
+    private static func readImageDynamicRange(
+        from defaults: UserDefaults
+    ) -> ImageDynamicRange {
+        guard
+            let value = defaults.string(forKey: Key.imageDynamicRange),
+            let dynamicRange = ImageDynamicRange(rawValue: value)
+        else {
+            return defaultImageDynamicRange
+        }
+
+        return dynamicRange
     }
 
     private static func readNavigationIntervalMilliseconds(
