@@ -11,6 +11,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     @Published private(set) var activeCanSaveCopy = false
     @Published private(set) var hasOpenWindows = false
     @Published private(set) var activeZoomToFit = false
+    @Published private(set) var activeStickyZoom = false
     @Published private(set) var activeZoomToFill = false
     @Published private(set) var activeCanZoom = false
     @Published private(set) var recentDocumentURLs: [URL] = []
@@ -305,6 +306,11 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         updateActiveZoomState()
     }
 
+    func setStickyZoom(_ enabled: Bool) {
+        mostRecentWindowController?.setStickyZoom(enabled)
+        updateActiveZoomState()
+    }
+
     func actualSize() {
         mostRecentWindowController?.actualSize()
         updateActiveZoomState()
@@ -485,6 +491,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
 
     private func updateActiveZoomState() {
         let controller = mostRecentWindowController
+        activeStickyZoom = controller?.isStickyZoom ?? false
         activeCanZoom =
             controller?.imageDocument.image != nil
             && controller?.imageDocument.isLoading == false

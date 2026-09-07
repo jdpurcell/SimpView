@@ -42,6 +42,7 @@ final class AppPreferences: NSObject, ObservableObject {
     @Published private(set) var navigationIntervalMilliseconds: Int
     @Published private(set) var navigationJumpDistance: Int
     @Published private(set) var preloadAdjacentImages: Bool
+    @Published private(set) var stickyZoom: Bool
     @Published private(set) var sessionQuitBehavior: SessionQuitBehavior
     @Published private(set) var quitOnLastWindowClosed: Bool
     @Published private(set) var hideTitleBar: Bool
@@ -58,6 +59,7 @@ final class AppPreferences: NSObject, ObservableObject {
         static let navigationInterval = "navigationInterval"
         static let navigationJumpDistance = "navigationJumpDistance"
         static let preloadAdjacentImages = "preloadAdjacentImages"
+        static let stickyZoom = "stickyZoom"
         static let sessionQuitBehavior = "sessionQuitBehavior"
         static let quitOnLastWindowClosed = "quitOnLastWindowClosed"
         static let hideTitleBar = "hideTitleBar"
@@ -82,6 +84,7 @@ final class AppPreferences: NSObject, ObservableObject {
 
     init(defaults: UserDefaults) {
         self.defaults = defaults
+        stickyZoom = Self.readBool(Key.stickyZoom, defaultValue: false, from: defaults)
         zoomStepPercent = Self.readZoomStepPercent(from: defaults)
         imageSortField = Self.readImageSortField(from: defaults)
         imageSortDirection = Self.readImageSortDirection(from: defaults)
@@ -118,6 +121,8 @@ final class AppPreferences: NSObject, ObservableObject {
     }
 
     func refresh() {
+        let newStickyZoom = Self.readBool(Key.stickyZoom, defaultValue: false, from: defaults)
+        if stickyZoom != newStickyZoom { stickyZoom = newStickyZoom }
         let newZoomStepPercent = Self.readZoomStepPercent(from: defaults)
         if zoomStepPercent != newZoomStepPercent {
             zoomStepPercent = newZoomStepPercent
@@ -211,6 +216,11 @@ final class AppPreferences: NSObject, ObservableObject {
 
     func setPreloadAdjacentImages(_ value: Bool) {
         defaults.set(value, forKey: Key.preloadAdjacentImages)
+        refresh()
+    }
+
+    func setStickyZoom(_ value: Bool) {
+        defaults.set(value, forKey: Key.stickyZoom)
         refresh()
     }
 

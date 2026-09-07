@@ -25,6 +25,7 @@ final class ImageViewportController {
 
     private weak var viewport: ZoomableImageView?
     private var pendingSessionState: ViewportSessionState?
+    private var imageChangeState: (viewport: ViewportSessionState, size: NSSize)?
 
     func attach(_ viewport: ZoomableImageView) {
         self.viewport = viewport
@@ -56,9 +57,36 @@ final class ImageViewportController {
         }
     }
 
-    func prepareForNewImage() {
+    func captureBeforeImageChange() {
+        // Capture before the loading placeholder can dismantle the viewport.
+        // Keep this snapshot through interrupted loads and decode errors.
+        if let viewport, let image = viewport.image {
+            imageChangeState = (viewport.captureSessionState(), image.size)
+        }
+    }
+
+    func prepareForNewImage(size: NSSize?, preservingZoom: Bool) {
         pendingSessionState = nil
-        setZoomMode(.fit)
+        if preservingZoom, let saved = imageChangeState {
+            zoomMode = saved.viewport.zoomMode
+            if let size, size.width > 0, size.height > 0 {
+                // Preserve an image-space displacement from center, not a
+                // fraction of the old image's dimensions. The normal restore
+                // path recalculates Fit/Fill and constrains the final position.
+                pendingSessionState = ViewportSessionState(
+                    zoomMode: zoomMode,
+                    magnification: saved.viewport.magnification,
+                    centerX: 0.5 + (saved.viewport.centerX - 0.5) * saved.size.width / size.width,
+                    centerY: 0.5 + (saved.viewport.centerY - 0.5) * saved.size.height / size.height
+                )
+            }
+            // Apply to the new image when SwiftUI attaches/updates its view,
+            // not to the old image that may still be on screen right now.
+            zoomModeChanged?()
+        } else {
+            imageChangeState = nil
+            setZoomMode(.fit)
+        }
     }
 
     func captureSessionState() -> ViewportSessionState {

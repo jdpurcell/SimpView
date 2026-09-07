@@ -237,6 +237,15 @@ struct SimpViewCommands: Commands {
             .keyboardShortcut("-")
             .disabled(!windowManager.activeCanZoom)
 
+            Toggle(isOn: Binding(
+                get: { windowManager.activeStickyZoom },
+                set: { windowManager.setStickyZoom($0) }
+            )) {
+                Label("Sticky Zoom", systemImage: "pin")
+            }
+            .keyboardShortcut("z", modifiers: [])
+            .disabled(!windowManager.hasOpenWindows)
+
             Divider()
         }
 

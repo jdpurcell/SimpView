@@ -12,6 +12,8 @@ struct SessionWindowState: Codable {
     let imagePath: String?
     let viewport: ViewportSessionState?
     let isMiniaturized: Bool
+    // Optional so sessions written before Sticky Zoom still decode unchanged.
+    var stickyZoom: Bool? = nil
 }
 
 struct ViewportSessionState: Codable {

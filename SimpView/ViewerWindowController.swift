@@ -9,6 +9,7 @@ final class ViewerWindowController: NSWindowController {
     private var navigator = ImageNavigator(source: FileImageSource())
     private var decodeTask: Task<CGImage?, Error>?
     private var isSavingCopy = false
+    private(set) var isStickyZoom = AppPreferences.shared.stickyZoom
 
     var didOpenImage: ((_ addToRecentDocuments: Bool) -> Void)?
     var documentStateChanged: (() -> Void)?
@@ -81,6 +82,11 @@ final class ViewerWindowController: NSWindowController {
             self?.navigate(offset < 0 ? .previous : .next)
         }
         observeListing()
+        AppPreferences.shared.$stickyZoom
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] enabled in self?.setStickyZoom(enabled) }
+            .store(in: &cancellables)
         imageDocument.$isLoading
             .removeDuplicates()
             .dropFirst()
@@ -284,6 +290,7 @@ final class ViewerWindowController: NSWindowController {
     }
 
     func restoreSession(_ state: SessionWindowState) {
+        setStickyZoom(state.stickyZoom ?? false)
         pendingRestoredWindowState = state
         guard let imagePath = state.imagePath else {
             return
@@ -340,7 +347,8 @@ final class ViewerWindowController: NSWindowController {
                 || imageDocument.image == nil
                 ? restoredState?.viewport
                 : viewportController.captureSessionState(),
-            isMiniaturized: window.isMiniaturized
+            isMiniaturized: window.isMiniaturized,
+            stickyZoom: isStickyZoom
         )
     }
 
@@ -503,6 +511,7 @@ final class ViewerWindowController: NSWindowController {
         showsLoadingIndicatorImmediately: Bool = false
     ) async -> Bool {
         let decodeMode = AppPreferences.shared.imageDynamicRange.decodeMode
+        viewportController.captureBeforeImageChange()
         let result = await imageDocument.open(
             resolvingImage: resolvingImage,
             didResolveImage: { [weak self] url in
@@ -527,7 +536,7 @@ final class ViewerWindowController: NSWindowController {
             displayedImageDecodeMode = decodeMode
             navigator.didOpen(url)
             zoomPercentage = nil
-            viewportController.prepareForNewImage()
+            viewportController.prepareForNewImage(size: imageDocument.image?.size, preservingZoom: isStickyZoom)
             updateWindowTitle(revealingBubble: true)
             didOpenImage?(addToRecentDocuments)
             await waitForPresentation()
@@ -538,7 +547,7 @@ final class ViewerWindowController: NSWindowController {
             displayedImageDecodeMode = decodeMode
             navigator.didOpen(url)
             zoomPercentage = nil
-            viewportController.prepareForNewImage()
+            viewportController.prepareForNewImage(size: nil, preservingZoom: isStickyZoom)
             updateWindowTitle(revealingBubble: true)
             didOpenImage?(false)
             await waitForPresentation()
@@ -748,6 +757,12 @@ final class ViewerWindowController: NSWindowController {
 
     var isZoomToFit: Bool {
         viewportController.isZoomToFit
+    }
+
+    func setStickyZoom(_ enabled: Bool) {
+        guard isStickyZoom != enabled else { return }
+        isStickyZoom = enabled
+        zoomModeChanged?()
     }
 
     var isZoomToFill: Bool {

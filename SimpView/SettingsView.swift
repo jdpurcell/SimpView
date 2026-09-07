@@ -64,6 +64,12 @@ struct SettingsView: View {
                     isOn: preloadAdjacentImages
                 )
 
+                Toggle("Sticky zoom", isOn: Binding(
+                    get: { preferences.stickyZoom },
+                    set: { preferences.setStickyZoom($0) }
+                ))
+                .help("Keep zoom and pan position when changing images. Changing this default also updates all open windows.")
+
                 LabeledContent("Navigation speed") {
                     HStack(spacing: 8) {
                         Text(

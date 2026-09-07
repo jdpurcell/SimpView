@@ -9,7 +9,7 @@ It's built for fast, keyboard/gesture-friendly browsing.
 ## Features
 
 - Fast folder-based browsing with arrow-key navigation, jump navigation (e.g. skip forward/back 50 images with ⌥→/⌥←), and random image navigation.
-- Zoom controls: Zoom to Fit, Zoom to Fill, Actual Size, and Zoom In/Out with customizable step.
+- Zoom controls: Zoom to Fit, Zoom to Fill, Actual Size, Zoom In/Out with customizable step, and Sticky Zoom (i.e. preserve when navigating).
 - Adjacent-image preloading (optional).
 - Multi-window workflow with recent files, Show in Finder, and session restore support.
 - Trackpad/mouse controls: Scroll to zoom, pinch to zoom, left drag to pan, ⌘ scroll to pan, sideways swipe to navigate, middle click for Zoom to Fit, ⌘ middle click for Zoom to Fill.
