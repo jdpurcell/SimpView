@@ -72,9 +72,9 @@ final class AppPreferences: NSObject, ObservableObject {
     nonisolated static let defaultNavigationIntervalMilliseconds = 80
     nonisolated static let navigationIntervalMillisecondsRange = 0...500
     nonisolated static let navigationIntervalMillisecondsStep = 10
-    nonisolated static let defaultNavigationJumpDistance = 50
-    nonisolated static let navigationJumpDistanceRange = 25...250
-    nonisolated static let navigationJumpDistanceStep = 25
+    nonisolated static let defaultNavigationJumpDistance = 25
+    nonisolated static let navigationJumpDistanceRange = 5...250
+    nonisolated static let navigationJumpDistanceStep = 5
 
     private let defaults: UserDefaults
 
