@@ -9,6 +9,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     @Published private(set) var activeImageURL: URL?
     @Published private(set) var activeCanNavigate = false
     @Published private(set) var activeCanSaveCopy = false
+    @Published private(set) var activeCanClone = false
     @Published private(set) var hasOpenWindows = false
     @Published private(set) var activeZoomToFit = false
     @Published private(set) var activeStickyZoom = false
@@ -169,6 +170,19 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
 
             controller.open(url)
         }
+    }
+
+    func cloneWindow() {
+        guard let original = mostRecentWindowController, original.canClone,
+              original.window?.attachedSheet == nil else { return }
+        stopKeyboardNavigation()
+        let controller = makeWindowController()
+        windowControllers.append(controller)
+        updateWindowAvailability()
+        controller.clone(from: original)
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate()
     }
 
     func openCamera() {
@@ -492,6 +506,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         activeImageURL = mostRecentWindowController?.imageDocument.fileURL
         activeCanNavigate = mostRecentWindowController?.canNavigate ?? false
         activeCanSaveCopy = mostRecentWindowController?.canSaveCopy ?? false
+        activeCanClone = mostRecentWindowController?.canClone ?? false
     }
 
     private func updateActiveZoomState() {

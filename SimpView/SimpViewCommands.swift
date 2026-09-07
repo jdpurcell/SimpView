@@ -75,6 +75,14 @@ struct SimpViewCommands: Commands {
             .keyboardShortcut("n")
 
             Button {
+                windowManager.cloneWindow()
+            } label: {
+                Label("Duplicate Window", systemImage: "macwindow.on.rectangle")
+            }
+            .keyboardShortcut("n", modifiers: [.command, .shift])
+            .disabled(!windowManager.activeCanClone)
+
+            Button {
                 windowManager.closeActiveWindow()
             } label: {
                 Label("Close Window", systemImage: "xmark")

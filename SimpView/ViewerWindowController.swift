@@ -162,6 +162,31 @@ final class ViewerWindowController: NSWindowController {
         openImage(image)
     }
 
+    var canClone: Bool {
+        imageDocument.image != nil && !imageDocument.isLoading && navigator.source.isAvailable
+    }
+
+    func clone(from original: ViewerWindowController) {
+        guard original.canClone, let image = original.imageDocument.reference,
+              let originalWindow = original.window else { return }
+        let viewport = original.viewportController.captureSessionState()
+        setStickyZoom(original.isStickyZoom)
+        // Like session restore, a full-screen source produces an ordinary
+        // window with its pre-full-screen geometry.
+        window?.setFrame(original.frameBeforeFullScreen ?? originalWindow.frame, display: false)
+        if let camera = original.navigator.source as? CameraImageSource {
+            // Independent navigation/cache, shared device connection and queue.
+            setSource(CameraImageSource(session: camera.session))
+        }
+        navigator.prepareForExternalOpen(image)
+        openTask = Task { [weak self] in
+            guard let self else { return }
+            let didOpen = await performOpen(resolvingImage: { image }, addToRecentDocuments: false)
+            guard didOpen, !Task.isCancelled else { return }
+            viewportController.restoreSessionState(viewport)
+        }
+    }
+
     private func setSource(_ source: any ImageSource) {
         decodeTask?.cancel()
         openTask?.cancel()
