@@ -326,6 +326,11 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         updateActiveZoomState()
     }
 
+    func setZoomLevel() {
+        stopKeyboardNavigation()
+        mostRecentWindowController?.setZoomLevel()
+    }
+
     func windowDidBecomeKey(_ notification: Notification) {
         guard let controller = controller(for: notification.object as? NSWindow) else {
             return

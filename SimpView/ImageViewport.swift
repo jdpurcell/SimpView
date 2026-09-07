@@ -131,6 +131,10 @@ final class ImageViewportController {
         viewport?.zoom(by: 1 / ZoomableImageView.zoomStep)
     }
 
+    func setZoomLevel(_ percentage: Double) {
+        viewport?.zoom(to: CGFloat(percentage / 100))
+    }
+
     private func setZoomMode(_ mode: ViewportZoomMode) {
         zoomMode = mode
         zoomModeChanged?()
@@ -406,15 +410,17 @@ final class ZoomableImageView: NSView {
     }
 
     func actualSize() {
-        cancelRecenterAnimation()
-        setManualZoomMode()
-        setMagnification(1)
+        zoom(to: 1)
     }
 
     func zoom(by factor: CGFloat) {
+        zoom(to: scrollView.magnification * factor)
+    }
+
+    func zoom(to magnification: CGFloat) {
         cancelRecenterAnimation()
         setManualZoomMode()
-        setMagnification(scrollView.magnification * factor)
+        setMagnification(magnification)
     }
 
     func captureSessionState() -> ViewportSessionState {

@@ -789,6 +789,42 @@ final class ViewerWindowController: NSWindowController {
         viewportController.zoomOut()
     }
 
+    func setZoomLevel() {
+        guard let window, window.attachedSheet == nil,
+              imageDocument.image != nil, !imageDocument.isLoading else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Set Zoom Level"
+        alert.informativeText = "Zoom level (%)"
+        let okay = alert.addButton(withTitle: "OK")
+        okay.keyEquivalent = "\r"
+        alert.addButton(withTitle: "Cancel").keyEquivalent = "\u{1b}"
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.stringValue = String(format: "%.1f", viewportController.captureSessionState().magnification * 100)
+        field.setAccessibilityLabel("Zoom level (%)")
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+
+        @MainActor func percentage() -> Double? {
+            guard let value = Double(field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)),
+                  value.isFinite, value > 0 else { return nil }
+            return value
+        }
+        // Invalid/empty input cannot dismiss the prompt with OK. The viewport
+        // applies its usual zoom limits when an accepted value is committed.
+        let observer = NotificationCenter.default.publisher(
+            for: NSControl.textDidChangeNotification, object: field
+        ).sink { _ in okay.isEnabled = percentage() != nil }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            observer.cancel()
+            guard response == .alertFirstButtonReturn, let value = percentage() else { return }
+            self?.viewportController.setZoomLevel(value)
+        }
+        alert.window.makeFirstResponder(field)
+        field.selectText(nil)
+    }
+
     private func updateWindowTitle(
         revealingBubble: Bool = false
     ) {

@@ -237,6 +237,14 @@ struct SimpViewCommands: Commands {
             .keyboardShortcut("-")
             .disabled(!windowManager.activeCanZoom)
 
+            Button {
+                windowManager.setZoomLevel()
+            } label: {
+                Label("Set Zoom Level…", systemImage: "magnifyingglass")
+            }
+            .keyboardShortcut("l", modifiers: [])
+            .disabled(!windowManager.activeCanZoom)
+
             Toggle(isOn: Binding(
                 get: { windowManager.activeStickyZoom },
                 set: { windowManager.setStickyZoom($0) }
