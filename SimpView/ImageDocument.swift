@@ -5,16 +5,18 @@ import ImageIO
 @MainActor
 final class ImageDocument: ObservableObject {
     enum OpenResult {
-        case opened(URL)
-        case failed(URL)
+        case opened(ImageReference)
+        case failed(ImageReference)
         case unchanged
         case superseded
     }
 
     @Published private(set) var image: NSImage?
-    @Published private(set) var fileURL: URL?
+    @Published private(set) var reference: ImageReference?
+    var fileURL: URL? { reference?.fileURL }
+    @Published private(set) var errorMessage = "The image format isn’t supported, or the file is damaged."
     @Published private(set) var isLoading = false
-    @Published private(set) var isResolvingURL = false
+    @Published private(set) var isResolvingImage = false
     @Published private(set) var isShowingLoadingIndicator = false
     @Published private(set) var hasDecodeError = false
 
@@ -22,19 +24,19 @@ final class ImageDocument: ObservableObject {
     private var loadIdentifier = UUID()
 
     var displayName: String {
-        fileURL?.lastPathComponent ?? "SimpView"
+        reference?.name ?? "SimpView"
     }
 
     func open(
-        resolvingURL: () async -> URL?,
-        didResolveURL: (URL) -> Void = { _ in },
-        decode: (URL) async -> CGImage?,
+        resolvingImage: () async -> ImageReference?,
+        didResolveImage: (ImageReference) -> Void = { _ in },
+        decode: (ImageReference) async throws -> CGImage?,
         showsLoadingIndicatorImmediately: Bool = false
     ) async -> OpenResult {
         let identifier = UUID()
         loadIdentifier = identifier
         isLoading = true
-        isResolvingURL = true
+        isResolvingImage = true
         if showsLoadingIndicatorImmediately {
             loadingIndicatorTask?.cancel()
             loadingIndicatorTask = nil
@@ -44,33 +46,43 @@ final class ImageDocument: ObservableObject {
             scheduleLoadingIndicator(for: identifier)
         }
 
-        let resolvedURL = await resolvingURL()
+        let resolvedImage = await resolvingImage()
 
         guard loadIdentifier == identifier, !Task.isCancelled else {
             return .superseded
         }
 
-        isResolvingURL = false
-        guard let url = resolvedURL else {
+        isResolvingImage = false
+        guard let reference = resolvedImage else {
             finishLoading(identifier: identifier)
             return .unchanged
         }
 
-        fileURL = url
+        self.reference = reference
         hasDecodeError = false
-        didResolveURL(url)
+        didResolveImage(reference)
 
-        let decodedImage = await decode(url)
+        var failureMessage = "The image format isn’t supported, or the file is damaged."
+        let decodedImage: CGImage?
+        do {
+            decodedImage = try await decode(reference)
+        } catch is CancellationError {
+            return .superseded
+        } catch {
+            failureMessage = error.localizedDescription
+            decodedImage = nil
+        }
 
-        guard loadIdentifier == identifier else {
+        guard loadIdentifier == identifier, !Task.isCancelled else {
             return .superseded
         }
 
         guard let decodedImage else {
+            errorMessage = failureMessage
             hasDecodeError = true
             image = nil
             finishLoading(identifier: identifier)
-            return .failed(url)
+            return .failed(reference)
         }
 
         image = NSImage(
@@ -79,17 +91,17 @@ final class ImageDocument: ObservableObject {
         )
         hasDecodeError = false
         finishLoading(identifier: identifier)
-        return .opened(url)
+        return .opened(reference)
     }
 
     func close() {
         loadIdentifier = UUID()
         loadingIndicatorTask?.cancel()
         isLoading = false
-        isResolvingURL = false
+        isResolvingImage = false
         isShowingLoadingIndicator = false
         image = nil
-        fileURL = nil
+        reference = nil
         hasDecodeError = false
     }
 
@@ -116,7 +128,7 @@ final class ImageDocument: ObservableObject {
         loadingIndicatorTask?.cancel()
         loadingIndicatorTask = nil
         isLoading = false
-        isResolvingURL = false
+        isResolvingImage = false
         isShowingLoadingIndicator = false
     }
 
@@ -124,7 +136,15 @@ final class ImageDocument: ObservableObject {
         at url: URL,
         mode: ImageDecodeMode
     ) -> CGImage? {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+        decodeImage(source: CGImageSourceCreateWithURL(url as CFURL, nil), mode: mode)
+    }
+
+    nonisolated static func decodeImage(data: Data, mode: ImageDecodeMode) -> CGImage? {
+        decodeImage(source: CGImageSourceCreateWithData(data as CFData, nil), mode: mode)
+    }
+
+    nonisolated private static func decodeImage(source: CGImageSource?, mode: ImageDecodeMode) -> CGImage? {
+        guard let source else {
             return nil
         }
 

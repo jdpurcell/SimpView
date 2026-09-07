@@ -7,6 +7,8 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     static let shared = WindowManager()
 
     @Published private(set) var activeImageURL: URL?
+    @Published private(set) var activeCanNavigate = false
+    @Published private(set) var activeCanSaveCopy = false
     @Published private(set) var hasOpenWindows = false
     @Published private(set) var activeZoomToFit = false
     @Published private(set) var activeZoomToFill = false
@@ -14,6 +16,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     @Published private(set) var recentDocumentURLs: [URL] = []
 
     private var windowControllers: [ViewerWindowController] = []
+    private var cameraPicker: CameraPicker?
     private weak var lastFocusedWindowController: ViewerWindowController?
     private weak var keyboardNavigationController: ViewerWindowController?
     private var keyboardNavigationCommand: ImageNavigationCommand?
@@ -167,6 +170,20 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         }
     }
 
+    func openCamera() {
+        guard cameraPicker == nil else { return }
+        stopKeyboardNavigation()
+        let controller = mostRecentWindowController ?? makeWindow()
+        guard let window = controller.window, window.attachedSheet == nil else { return }
+        let picker = CameraPicker { [weak controller] image, session in
+            controller?.openCamera(image, session: session)
+        } dismiss: { [weak self] in
+            self?.cameraPicker = nil
+        }
+        cameraPicker = picker
+        window.beginSheet(picker.window!)
+    }
+
     func openRecentDocument(_ url: URL) {
         stopKeyboardNavigation()
         let controller = mostRecentWindowController ?? makeWindow()
@@ -236,6 +253,11 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.writeObjects([url as NSURL])
+    }
+
+    func saveImageCopy() {
+        stopKeyboardNavigation()
+        mostRecentWindowController?.saveImageCopy()
     }
 
     func previousImage() {
@@ -323,6 +345,11 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else {
             return
+        }
+
+        if let pickerWindow = cameraPicker?.window, window.attachedSheet === pickerWindow {
+            cameraPicker?.finish()
+            cameraPicker = nil
         }
 
         if controller(for: window) === keyboardNavigationController {
@@ -452,6 +479,8 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
 
     private func updateActiveImageURL() {
         activeImageURL = mostRecentWindowController?.imageDocument.fileURL
+        activeCanNavigate = mostRecentWindowController?.canNavigate ?? false
+        activeCanSaveCopy = mostRecentWindowController?.canSaveCopy ?? false
     }
 
     private func updateActiveZoomState() {
@@ -537,7 +566,7 @@ final class WindowManager: NSObject, ObservableObject, NSWindowDelegate {
 
         guard
             let controller = controller(for: NSApp.keyWindow),
-            controller.imageDocument.fileURL != nil
+            controller.canNavigate
         else {
             return false
         }

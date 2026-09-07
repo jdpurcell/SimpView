@@ -60,7 +60,7 @@ actor ImagePreloadCache {
 
     func updateNeighborhood(
         currentURL: URL,
-        adjacentImages: [FolderNavigator.ImageReference],
+        adjacentImages: [ImageEntry],
         mode: ImageDecodeMode
     ) {
         setDecodeMode(mode)
@@ -73,12 +73,13 @@ actor ImagePreloadCache {
 
         self.currentURL = currentURL
         previousCurrentURL = nil
-        adjacentURLs = Set(adjacentImages.map(\.url))
+        adjacentURLs = Set(adjacentImages.compactMap { $0.image.fileURL })
         prune()
 
         for image in adjacentImages {
+            guard let url = image.image.fileURL else { continue }
             _ = load(
-                image.url,
+                url,
                 version: FileVersion(
                     modificationDate: image.modificationDate,
                     fileSize: image.fileSize

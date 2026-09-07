@@ -6,8 +6,9 @@ import SwiftUI
 final class ViewerWindowController: NSWindowController {
     let imageDocument = ImageDocument()
     let viewportController = ImageViewportController()
-    private let folderNavigator = FolderNavigator()
-    private let imagePreloadCache = ImagePreloadCache()
+    private var navigator = ImageNavigator(source: FileImageSource())
+    private var decodeTask: Task<CGImage?, Error>?
+    private var isSavingCopy = false
 
     var didOpenImage: ((_ addToRecentDocuments: Bool) -> Void)?
     var documentStateChanged: (() -> Void)?
@@ -79,10 +80,7 @@ final class ViewerWindowController: NSWindowController {
             }
             self?.navigate(offset < 0 ? .previous : .next)
         }
-        folderNavigator.listingChanged = { [weak self] in
-            self?.updateWindowTitle()
-            self?.updateImagePreloads()
-        }
+        observeListing()
         imageDocument.$isLoading
             .removeDuplicates()
             .dropFirst()
@@ -114,7 +112,7 @@ final class ViewerWindowController: NSWindowController {
                 }
 
                 Task {
-                    await self.imagePreloadCache.setEnabled(enabled)
+                    await self.navigator.source.setPreloadingEnabled(enabled)
                     if enabled {
                         self.updateImagePreloads()
                     }
@@ -149,9 +147,90 @@ final class ViewerWindowController: NSWindowController {
     }
 
     func open(_ url: URL) {
+        if !(navigator.source is FileImageSource) { setSource(FileImageSource()) }
+        openImage(.file(url.standardizedFileURL))
+    }
+
+    func openCamera(_ image: ImageReference, session: CameraSession) {
+        setSource(CameraImageSource(session: session))
+        openImage(image)
+    }
+
+    private func setSource(_ source: any ImageSource) {
+        decodeTask?.cancel()
+        openTask?.cancel()
+        navigator.close()
+        navigator = ImageNavigator(source: source)
+        observeListing()
+    }
+
+    private func observeListing() {
+        navigator.listingChanged = { [weak self] in
+            self?.updateWindowTitle()
+            self?.updateImagePreloads()
+            self?.documentStateChanged?()
+        }
+    }
+
+    var canNavigate: Bool { imageDocument.reference != nil && navigator.source.isAvailable }
+
+    var canSaveCopy: Bool {
+        canNavigate && !imageDocument.isLoading && !isSavingCopy
+    }
+
+    func saveImageCopy() {
+        guard canSaveCopy, let image = imageDocument.reference,
+              let window, window.attachedSheet == nil else { return }
+        // Capture the source and image now, not whichever image is current when
+        // the asynchronous save finishes. Saving never changes navigation state.
+        let source = navigator.source
+        let panel = NSSavePanel()
+        panel.title = "Save a Copy"
+        // A content-type restriction can canonicalize .JPG to .jpeg. This is
+        // an unchanged copy, not an export format picker; keep the supplied name.
+        panel.nameFieldStringValue = image.name
+        panel.isExtensionHidden = false
+        isSavingCopy = true
+        documentStateChanged?()
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard let self else { return }
+            guard response == .OK, let destination = panel.url else {
+                self.isSavingCopy = false
+                self.documentStateChanged?()
+                return
+            }
+            Task { @MainActor in
+                let progress = NSAlert()
+                progress.messageText = "Saving a Copy…"
+                progress.informativeText = image.name
+                progress.addButton(withTitle: "Cancel")
+                let spinner = NSProgressIndicator(frame: NSRect(x: 0, y: 0, width: 240, height: 16))
+                spinner.style = .bar
+                spinner.isIndeterminate = true
+                spinner.startAnimation(nil)
+                progress.accessoryView = spinner
+                let save = Task { try await source.saveCopy(image, to: destination) }
+                progress.beginSheetModal(for: window) { _ in save.cancel() }
+                var failure: Error?
+                do { try await save.value }
+                catch is CancellationError { }
+                catch { failure = error }
+                if progress.window.sheetParent != nil { window.endSheet(progress.window) }
+                self.isSavingCopy = false
+                self.documentStateChanged?()
+                if let failure {
+                    let alert = NSAlert(error: failure)
+                    alert.messageText = "Couldn’t Save a Copy"
+                    alert.beginSheetModal(for: window, completionHandler: nil)
+                }
+            }
+        }
+    }
+
+    private func openImage(_ url: ImageReference) {
         pendingRestoredWindowState = nil
         willOpenImage?()
-        folderNavigator.prepareForExternalOpen(url)
+        navigator.prepareForExternalOpen(url)
         open {
             url
         }
@@ -210,8 +289,9 @@ final class ViewerWindowController: NSWindowController {
             return
         }
 
-        let url = URL(fileURLWithPath: imagePath)
-        folderNavigator.prepareForExternalOpen(url)
+        let url = ImageReference.file(URL(fileURLWithPath: imagePath).standardizedFileURL)
+        navigator.prepareForExternalOpen(url)
+        decodeTask?.cancel()
         openTask?.cancel()
         openTask = Task { [weak self] in
             guard let self else {
@@ -219,7 +299,7 @@ final class ViewerWindowController: NSWindowController {
             }
 
             let didOpen = await performOpen(
-                resolvingURL: { url },
+                resolvingImage: { url },
                 addToRecentDocuments: false,
                 showsLoadingIndicatorImmediately: true
             )
@@ -240,6 +320,9 @@ final class ViewerWindowController: NSWindowController {
         guard let window else {
             return nil
         }
+        // Camera object identities are scoped to a connection, not restorable
+        // filesystem paths. Omit these windows from saved sessions for now.
+        if case .camera = imageDocument.reference { return nil }
 
         let frame = frameBeforeFullScreen ?? window.frame
         let restoredState = pendingRestoredWindowState
@@ -315,12 +398,12 @@ final class ViewerWindowController: NSWindowController {
     }
 
     func navigateByKeyboard(_ command: ImageNavigationCommand) async -> Bool {
-        guard let currentURL = imageDocument.fileURL else {
+        guard canNavigate, let currentURL = imageDocument.reference else {
             return false
         }
 
-        return await performOpen { [folderNavigator] in
-            await folderNavigator.navigationURL(
+        return await performOpen { [navigator] in
+            await navigator.navigationImage(
                 from: currentURL,
                 target: Self.navigationTarget(for: command)
             )
@@ -332,7 +415,7 @@ final class ViewerWindowController: NSWindowController {
     }
 
     func markFolderListingDirty() {
-        folderNavigator.markListingDirty()
+        navigator.markListingDirty()
     }
 
     func setImagePreloadingSuspended(_ suspended: Bool) {
@@ -347,12 +430,12 @@ final class ViewerWindowController: NSWindowController {
     }
 
     private var canStartNavigation: Bool {
-        // Once navigation has resolved a target image, fileURL already points
+        // Once navigation has resolved a target image, the document already points
         // at that provisional target. A second navigation can then intentionally
         // skip past a slow decode. Before that, while the folder listing is
         // still resolving the target, another navigation would only restart the
         // same lookup from the same old image and reset the loading grace period.
-        !(imageDocument.isLoading && imageDocument.isResolvingURL)
+        !(imageDocument.isLoading && imageDocument.isResolvingImage)
     }
 
     private func navigate(_ command: ImageNavigationCommand) {
@@ -360,12 +443,12 @@ final class ViewerWindowController: NSWindowController {
             return
         }
 
-        guard let currentURL = imageDocument.fileURL else {
+        guard canNavigate, let currentURL = imageDocument.reference else {
             return
         }
 
-        open { [folderNavigator] in
-            await folderNavigator.navigationURL(
+        open { [navigator] in
+            await navigator.navigationImage(
                 from: currentURL,
                 target: Self.navigationTarget(for: command)
             )
@@ -374,7 +457,7 @@ final class ViewerWindowController: NSWindowController {
 
     private static func navigationTarget(
         for command: ImageNavigationCommand
-    ) -> FolderNavigator.NavigationTarget {
+    ) -> ImageNavigator.NavigationTarget {
         switch command {
         case .previous:
             return .relative(offset: -1, clampsToBounds: false)
@@ -400,28 +483,29 @@ final class ViewerWindowController: NSWindowController {
     }
 
     private func open(
-        resolvingURL: @escaping () async -> URL?
+        resolvingImage: @escaping () async -> ImageReference?
     ) {
+        decodeTask?.cancel()
         openTask?.cancel()
         openTask = Task { [weak self] in
             guard !Task.isCancelled, let self else {
                 return
             }
 
-            _ = await performOpen(resolvingURL: resolvingURL)
+            _ = await performOpen(resolvingImage: resolvingImage)
         }
     }
 
     @discardableResult
     private func performOpen(
-        resolvingURL: () async -> URL?,
+        resolvingImage: () async -> ImageReference?,
         addToRecentDocuments: Bool = true,
         showsLoadingIndicatorImmediately: Bool = false
     ) async -> Bool {
         let decodeMode = AppPreferences.shared.imageDynamicRange.decodeMode
         let result = await imageDocument.open(
-            resolvingURL: resolvingURL,
-            didResolveURL: { [weak self] url in
+            resolvingImage: resolvingImage,
+            didResolveImage: { [weak self] url in
                 guard let self else {
                     return
                 }
@@ -430,7 +514,7 @@ final class ViewerWindowController: NSWindowController {
                 documentStateChanged?()
             },
             decode: { [weak self] url in
-                await self?.decodeImage(at: url, mode: decodeMode)
+                try await self?.decodeImage(at: url, mode: decodeMode)
             },
             showsLoadingIndicatorImmediately: showsLoadingIndicatorImmediately
         )
@@ -441,7 +525,7 @@ final class ViewerWindowController: NSWindowController {
         switch result {
         case .opened(let url):
             displayedImageDecodeMode = decodeMode
-            folderNavigator.didOpen(url)
+            navigator.didOpen(url)
             zoomPercentage = nil
             viewportController.prepareForNewImage()
             updateWindowTitle(revealingBubble: true)
@@ -452,7 +536,7 @@ final class ViewerWindowController: NSWindowController {
             return true
         case .failed(let url):
             displayedImageDecodeMode = decodeMode
-            folderNavigator.didOpen(url)
+            navigator.didOpen(url)
             zoomPercentage = nil
             viewportController.prepareForNewImage()
             updateWindowTitle(revealingBubble: true)
@@ -470,16 +554,23 @@ final class ViewerWindowController: NSWindowController {
     }
 
     private func decodeImage(
-        at url: URL,
+        at image: ImageReference,
         mode: ImageDecodeMode
-    ) async -> CGImage? {
-        if AppPreferences.shared.preloadAdjacentImages {
-            return await imagePreloadCache.image(at: url, mode: mode)
+    ) async throws -> CGImage? {
+        decodeTask?.cancel()
+        let source = navigator.source
+        let task = Task {
+            try Task.checkCancellation()
+            let image = try await source.load(image, mode: mode)
+            try Task.checkCancellation()
+            return image
         }
-
-        return await Task.detached(priority: .userInitiated) {
-            ImageDocument.decodeImage(at: url, mode: mode)
-        }.value
+        decodeTask = task
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 
     private func imageDecodeModeDidChange(to mode: ImageDecodeMode) {
@@ -521,7 +612,7 @@ final class ViewerWindowController: NSWindowController {
                 else {
                     return
                 }
-                await self.imagePreloadCache.setDecodeMode(mode)
+                await self.navigator.source.setDecodeMode(mode)
                 guard
                     AppPreferences.shared.imageDynamicRange.decodeMode == mode
                 else {
@@ -532,14 +623,14 @@ final class ViewerWindowController: NSWindowController {
             return
         }
 
-        guard let url = imageDocument.fileURL else {
+        guard let url = imageDocument.reference else {
             Task {
                 guard
                     AppPreferences.shared.imageDynamicRange.decodeMode == mode
                 else {
                     return
                 }
-                await imagePreloadCache.setDecodeMode(mode)
+                await navigator.source.setDecodeMode(mode)
             }
             return
         }
@@ -548,6 +639,7 @@ final class ViewerWindowController: NSWindowController {
             ? nil
             : viewportController.captureSessionState()
 
+        decodeTask?.cancel()
         openTask?.cancel()
         openTask = Task { [weak self] in
             await self?.reloadImage(
@@ -559,7 +651,7 @@ final class ViewerWindowController: NSWindowController {
     }
 
     private func reloadImage(
-        at url: URL,
+        at url: ImageReference,
         mode: ImageDecodeMode,
         viewportState: ViewportSessionState?
     ) async {
@@ -570,7 +662,7 @@ final class ViewerWindowController: NSWindowController {
             return
         }
 
-        await imagePreloadCache.setDecodeMode(mode)
+        await navigator.source.setDecodeMode(mode)
         guard
             !Task.isCancelled,
             AppPreferences.shared.imageDynamicRange.decodeMode == mode
@@ -579,9 +671,9 @@ final class ViewerWindowController: NSWindowController {
         }
 
         let result = await imageDocument.open(
-            resolvingURL: { url },
+            resolvingImage: { url },
             decode: { [weak self] url in
-                await self?.decodeImage(at: url, mode: mode)
+                try await self?.decodeImage(at: url, mode: mode)
             }
         )
         guard !Task.isCancelled else {
@@ -622,33 +714,33 @@ final class ViewerWindowController: NSWindowController {
     }
 
     func closeImage() {
+        decodeTask?.cancel()
         openTask?.cancel()
         pendingRestoredWindowState = nil
         displayedImageDecodeMode = nil
         pendingImageDecodeMode = nil
         imageDocument.close()
-        Task {
-            await self.imagePreloadCache.removeAll()
-        }
+        decodeTask = nil
+        navigator.close()
     }
 
     private func updateImagePreloads() {
         guard
             AppPreferences.shared.preloadAdjacentImages,
             !isImagePreloadingSuspended,
-            let currentURL = imageDocument.fileURL,
+            let currentURL = imageDocument.reference,
             !imageDocument.isLoading
         else {
             return
         }
 
-        let adjacentImages = folderNavigator.adjacentImages(
+        let adjacentImages = navigator.adjacentImages(
             to: currentURL
         )
         Task {
-            await imagePreloadCache.updateNeighborhood(
-                currentURL: currentURL,
-                adjacentImages: adjacentImages,
+            await navigator.source.preload(
+                current: currentURL,
+                neighbors: adjacentImages,
                 mode: AppPreferences.shared.imageDynamicRange.decodeMode
             )
         }
@@ -695,7 +787,7 @@ final class ViewerWindowController: NSWindowController {
             return
         }
 
-        if imageDocument.isLoading, imageDocument.isResolvingURL {
+        if imageDocument.isLoading, imageDocument.isResolvingImage {
             setWindowTitle(
                 "SimpView (Refreshing folder…)",
                 revealingBubble: revealingBubble
@@ -703,7 +795,7 @@ final class ViewerWindowController: NSWindowController {
             return
         }
 
-        guard imageDocument.fileURL != nil else {
+        guard imageDocument.reference != nil else {
             setWindowTitle(
                 "SimpView",
                 revealingBubble: revealingBubble
@@ -717,7 +809,7 @@ final class ViewerWindowController: NSWindowController {
         } else if imageDocument.isLoading || imageDocument.hasDecodeError {
             components.append("100.0%")
         }
-        if let position = folderNavigator.position(of: imageDocument.fileURL) {
+        if let position = navigator.position(of: imageDocument.reference) {
             components.append("\(position.index)/\(position.count)")
         }
         components.append(imageDocument.displayName)

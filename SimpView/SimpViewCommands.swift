@@ -59,6 +59,12 @@ struct SimpViewCommands: Commands {
                 )
             }
 
+            Button {
+                windowManager.openCamera()
+            } label: {
+                Label("Open Camera…", systemImage: "camera")
+            }
+
             Divider()
 
             Button {
@@ -99,6 +105,13 @@ struct SimpViewCommands: Commands {
         }
 
         CommandGroup(replacing: .saveItem) {
+            Button {
+                windowManager.saveImageCopy()
+            } label: {
+                Label("Save a Copy…", systemImage: "square.and.arrow.down")
+            }
+            .keyboardShortcut("s", modifiers: [.command, .shift])
+            .disabled(!windowManager.activeCanSaveCopy)
         }
 
         CommandGroup(replacing: .undoRedo) {
@@ -124,7 +137,7 @@ struct SimpViewCommands: Commands {
                 Label("Previous Image", systemImage: "chevron.left")
             }
             .keyboardShortcut(.leftArrow, modifiers: [])
-            .disabled(windowManager.activeImageURL == nil)
+            .disabled(!windowManager.activeCanNavigate)
             .modifierKeyAlternate(.option) {
                 Button {
                     windowManager.jumpBackImage()
@@ -132,7 +145,7 @@ struct SimpViewCommands: Commands {
                     Label("Jump Back", systemImage: "backward")
                 }
                 .keyboardShortcut(.leftArrow, modifiers: [.option])
-                .disabled(windowManager.activeImageURL == nil)
+                .disabled(!windowManager.activeCanNavigate)
             }
 
             Button {
@@ -141,7 +154,7 @@ struct SimpViewCommands: Commands {
                 Label("Next Image", systemImage: "chevron.right")
             }
             .keyboardShortcut(.rightArrow, modifiers: [])
-            .disabled(windowManager.activeImageURL == nil)
+            .disabled(!windowManager.activeCanNavigate)
             .modifierKeyAlternate(.option) {
                 Button {
                     windowManager.jumpForwardImage()
@@ -149,7 +162,7 @@ struct SimpViewCommands: Commands {
                     Label("Jump Forward", systemImage: "forward")
                 }
                 .keyboardShortcut(.rightArrow, modifiers: [.option])
-                .disabled(windowManager.activeImageURL == nil)
+                .disabled(!windowManager.activeCanNavigate)
             }
 
             Button {
@@ -158,7 +171,7 @@ struct SimpViewCommands: Commands {
                 Label("First Image", systemImage: "backward.end")
             }
             .keyboardShortcut(.home, modifiers: [])
-            .disabled(windowManager.activeImageURL == nil)
+            .disabled(!windowManager.activeCanNavigate)
 
             Button {
                 windowManager.lastImage()
@@ -166,7 +179,7 @@ struct SimpViewCommands: Commands {
                 Label("Last Image", systemImage: "forward.end")
             }
             .keyboardShortcut(.end, modifiers: [])
-            .disabled(windowManager.activeImageURL == nil)
+            .disabled(!windowManager.activeCanNavigate)
 
             Button {
                 windowManager.randomImage()
@@ -174,7 +187,7 @@ struct SimpViewCommands: Commands {
                 Label("Random Image", systemImage: "shuffle")
             }
             .keyboardShortcut("r", modifiers: [])
-            .disabled(windowManager.activeImageURL == nil)
+            .disabled(!windowManager.activeCanNavigate)
         }
 
         CommandGroup(before: .toolbar) {

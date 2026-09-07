@@ -33,7 +33,7 @@ struct ImageViewerView: View {
                     )
                 } description: {
                     Text(
-                        "The image format isn’t supported, or the file is damaged."
+                        document.errorMessage
                     )
                 }
             } else {
